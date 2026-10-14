@@ -11,7 +11,7 @@ what the screen shows.
 | $0045 | Lives left. Drops 3,2,1,0 on each loss; game over after 0 | `--cheat lives`: no drops, still playing at frame 13500 (game over ~9500 without) |
 | $0051 | 0 on title/menus, 1 from take-off on (stays 1 through deaths) | gate for cheats; holding $45 from power-on froze the title |
 | $0057 | Selected missile type (index) | firing code LDY $57 / LDA $0068,Y / SBC #1 / STA $0068,Y (PRG bank 10) |
-| $0068-$006A | Missiles left per type ($68+type). Mission 1: 60, 60, 0 | `--poke 68=05` -> HUD shows 05. Infinite-missile cheat not yet seen fire: scripted runs never lock a target |
+| $0068-$006A | Missiles left per type ($68+type). Mission 1: 60, 60, 0 | `--poke 68=05` -> HUD shows 05. Infinite missiles verified: `--poke 66=06,79E=00,7A0=00` (fire request + fake lock) fires 5 (60->55) without the cheat, 0 with it |
 | $0048 | Stage. Briefings at stages 0, 2, 5 = missions 1, 2, 3; stages between are later legs | `--poke 48=02` -> briefing types "MISSION #2"; text ID = $48 + $34 (code at $A770, PRG bank 3) |
 | $0050 | Game state: 1 mission intro/briefing, 2-4 launch, 5 flying, 6 hit, 11-15 crash/reload | skip: $48 = next mission start, $50 = 1 -> next briefing, then 2,3,4,5 |
 | $0052 | Event code, set and consumed in one frame: 2 = player destroyed ($8BB9 -> $F452) | trace of frame 5319 |
@@ -45,3 +45,7 @@ what the screen shows.
   6000-frame --hash-out identical with and without widescreen (presentation only).
 - Known limit: enemies only exist on screen inside the native 256 columns; the wings
   show sky, never planes.
+
+## Missile firing (PRG bank 10, $8581-$85F3)
+- Fires when $1E bit 2 is set. $1E is loaded each frame from the per-type weapon state $66/$67 ($57 picks).
+- Needs missiles left ($68+type & $3F), a free projectile slot ($0400,X), and a lock in $079E/$07A0 (not $FF).
