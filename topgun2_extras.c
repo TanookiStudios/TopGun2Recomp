@@ -23,8 +23,21 @@ static const char *const CH_KEYS[CH_COUNT] = {
     "MutePulse1", "MutePulse2", "MuteTriangle", "MuteNoise", "MuteDMC",
 };
 
+/* Cheats. Each one undoes a drop of exactly one in a counter, so it never
+ * touches the byte while the game boots or uses it for something else
+ * (holding $45 from power-on freezes the title). Addresses: notes/ram-map.md. */
+typedef struct { const char *key, *option; uint16_t addr; uint8_t slots; } Cheat;
+static const Cheat CHEATS[] = {
+    { "CheatLives",    "lives",    0x045, 1 },   /* lives left */
+    /* One counter per missile type at $68+type ($57 = selected type); the
+     * firing code does LDY $57 / LDA $0068,Y / SBC #1 / STA $0068,Y. */
+    { "CheatMissiles", "missiles", 0x068, 3 },
+};
+enum { CHEAT_COUNT = sizeof CHEATS / sizeof CHEATS[0] };
+
 typedef struct {
-    uint8_t mute;   /* bit per channel, CH_KEYS order */
+    uint8_t mute;     /* bit per channel, CH_KEYS order */
+    uint8_t cheats;   /* bit per CHEATS entry */
 } Settings;
 
 static Settings s;
@@ -45,6 +58,11 @@ static void apply_pokes(const Poke *p, int n)
 static void load_setting(void *ctx, const char *key, const char *value)
 {
     (void)ctx;
+    for (int i = 0; i < CHEAT_COUNT; i++)
+        if (!strcmp(key, CHEATS[i].key)) {
+            if (atoi(value)) s.cheats |= (uint8_t)(1u << i);
+            else s.cheats &= (uint8_t)~(1u << i);
+        }
     for (int i = 0; i < CH_COUNT; i++)
         if (!strcmp(key, CH_KEYS[i])) {
             if (atoi(value)) s.mute |= (uint8_t)(1u << i);
@@ -57,6 +75,8 @@ static void save_settings(void *ctx, FILE *f)
     (void)ctx;
     for (int i = 0; i < CH_COUNT; i++)
         fprintf(f, "%s = %d\n", CH_KEYS[i], (s.mute >> i) & 1);
+    for (int i = 0; i < CHEAT_COUNT; i++)
+        fprintf(f, "%s = %d\n", CHEATS[i].key, (s.cheats >> i) & 1);
 }
 
 /* ---- per frame ---- */
@@ -67,9 +87,26 @@ static void frame_begin(void *ctx)
     hw_apu_mute_mask = s.mute;
 }
 
+static uint8_t s_cheat_prev[CHEAT_COUNT][4];
+
+/* $51 is 0 on the title and menus and 1 from take-off on, through deaths. */
+#define IN_FLIGHT (hw.ram[0x051] == 1)
+
+static void apply_cheats(void)
+{
+    for (int i = 0; i < CHEAT_COUNT; i++)
+        for (int k = 0; k < CHEATS[i].slots; k++) {
+            uint8_t *v = &hw.ram[CHEATS[i].addr + k], *prev = &s_cheat_prev[i][k];
+            if ((s.cheats >> i & 1) && IN_FLIGHT && *prev != 0 && *v == (uint8_t)(*prev - 1))
+                *v = *prev;
+            *prev = *v;
+        }
+}
+
 static void frame_end(void *ctx)
 {
     (void)ctx;
+    apply_cheats();
     apply_pokes(s_pokes, s_poke_count);
     if (s_ram_trace) fwrite(hw.ram, 1, sizeof hw.ram, s_ram_trace);
 }
@@ -79,6 +116,7 @@ static void frame_end(void *ctx)
 static const CycHostOption OPTIONS[] = {
     { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
+    { "--cheat", true, "turn on a cheat for this run: lives, missiles" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
 
@@ -99,6 +137,11 @@ static bool option(void *ctx, const char *name, const char *value)
         }
         return true;
     }
+    if (!strcmp(name, "--cheat")) {
+        for (int i = 0; i < CHEAT_COUNT; i++)
+            if (!strcmp(value, CHEATS[i].option)) { s.cheats |= (uint8_t)(1u << i); return true; }
+        return false;
+    }
     if (!strcmp(name, "--mute")) {
         char *end;
         long v = strtol(value, &end, 0);
@@ -118,29 +161,36 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.mute.2", "Audio", "Mute triangle", "Bass line.",                    RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.3", "Audio", "Mute noise",    "Drums, guns and explosions.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.4", "Audio", "Mute samples",  "Recorded sound clips (DMC).",   RECOMP_RUNTIME_UI_BOOL },
+    { "tg2.cheat.0", "Cheats", "Infinite lives",    "Losing a plane doesn't cost a life.",   RECOMP_RUNTIME_UI_BOOL },
+    { "tg2.cheat.1", "Cheats", "Infinite missiles", "Firing doesn't use up missiles.",       RECOMP_RUNTIME_UI_BOOL },
 };
 
-static int mute_index(const RecompRuntimeUiItem *item)
+/* "tg2.mute.N" -> &s.mute bit N, "tg2.cheat.N" -> &s.cheats bit N. */
+static uint8_t *row_bits(const RecompRuntimeUiItem *item, int *bit)
 {
-    return strncmp(item->key, "tg2.mute.", 9) ? -1 : item->key[9] - '0';
+    if (!strncmp(item->key, "tg2.mute.", 9))  { *bit = item->key[9] - '0';  return &s.mute; }
+    if (!strncmp(item->key, "tg2.cheat.", 10)) { *bit = item->key[10] - '0'; return &s.cheats; }
+    return NULL;
 }
 
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
-    int i = mute_index(item);
-    if (i < 0) return 0;
-    *out = (s.mute >> i) & 1;
+    int bit;
+    uint8_t *bits = row_bits(item, &bit);
+    if (!bits) return 0;
+    *out = (*bits >> bit) & 1;
     return 1;
 }
 
 static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
-    int i = mute_index(item);
-    if (i < 0) return 0;
-    if (value) s.mute |= (uint8_t)(1u << i);
-    else s.mute &= (uint8_t)~(1u << i);
+    int bit;
+    uint8_t *bits = row_bits(item, &bit);
+    if (!bits) return 0;
+    if (value) *bits |= (uint8_t)(1u << bit);
+    else *bits &= (uint8_t)~(1u << bit);
     return 1;
 }
 

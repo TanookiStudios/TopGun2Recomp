@@ -8,7 +8,10 @@ what the screen shows.
 
 | Addr | Meaning | Proof |
 |------|---------|-------|
-| $0068 | Missiles left for the selected type (binary, 60 = 0x3C) | `--poke 68=05` -> HUD shows 05 (route_missiles, frame 3700) |
+| $0045 | Lives left. Drops 3,2,1,0 on each loss; game over after 0 | `--cheat lives`: no drops, still playing at frame 13500 (game over ~9500 without) |
+| $0051 | 0 on title/menus, 1 from take-off on (stays 1 through deaths) | gate for cheats; holding $45 from power-on froze the title |
+| $0057 | Selected missile type (index) | firing code LDY $57 / LDA $0068,Y / SBC #1 / STA $0068,Y (PRG bank 10) |
+| $0068-$006A | Missiles left per type ($68+type). Mission 1: 60, 60, 0 | `--poke 68=05` -> HUD shows 05. Infinite-missile cheat not yet seen fire: scripted runs never lock a target |
 | $078E | Missile count last drawn on the HUD; code at $A765 redraws when $68 != $78E | trace of frame 3677 |
 
 ## How the HUD is drawn
@@ -29,3 +32,4 @@ what the screen shows.
 ## Dead ends
 - Searching RAM for HUD numbers as BCD or digit bytes fails: digits are tile = digit + 3,
   and the source is a binary value.
+- $006B looks like fuel at a glance (250 -> 200) but changes every ~8 frames to random values: an RNG, not fuel.
