@@ -40,7 +40,13 @@ enum { CHEAT_COUNT = sizeof CHEATS / sizeof CHEATS[0] };
 typedef struct {
     uint8_t mute;     /* bit per channel, CH_KEYS order */
     uint8_t cheats;   /* bit per CHEATS entry */
+    uint8_t wide;     /* WIDE_NAMES index: 0 off .. 4 fit the window */
 } Settings;
+
+/* Widescreen choices, in NES_VIDEO_* order (common/nes_video_geometry.h):
+ * stock 256, 16:9 426, 21:9 560, 32:9 854, fit = the window's own shape. */
+static const char *const WIDE_NAMES[] = { "Off", "16:9", "21:9", "32:9", "Fit my screen" };
+enum { WIDE_COUNT = 5 };
 
 static Settings s;
 /* Command-line --cheat / --mute: this run only, never written to config.ini. */
@@ -59,9 +65,12 @@ static void apply_pokes(const Poke *p, int n)
 
 /* ---- settings ([Game] section of config.ini) ---- */
 
+static void apply_wide(int mode);
+
 static void load_setting(void *ctx, const char *key, const char *value)
 {
     (void)ctx;
+    if (!strcmp(key, "Widescreen")) apply_wide(atoi(value));
     for (int i = 0; i < CHEAT_COUNT; i++)
         if (!strcmp(key, CHEATS[i].key)) {
             if (atoi(value)) s.cheats |= (uint8_t)(1u << i);
@@ -81,6 +90,7 @@ static void save_settings(void *ctx, FILE *f)
         fprintf(f, "%s = %d\n", CH_KEYS[i], (s.mute >> i) & 1);
     for (int i = 0; i < CHEAT_COUNT; i++)
         fprintf(f, "%s = %d\n", CHEATS[i].key, (s.cheats >> i) & 1);
+    fprintf(f, "# 0 off, 1 16:9, 2 21:9, 3 32:9, 4 fit the window\nWidescreen = %d\n", s.wide);
 }
 
 /* ---- per frame ---- */
@@ -159,21 +169,12 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     return 1;
 }
 
-/* Menu view modes -> host widths. Adaptive follows the window, so 21:9 and
- * 32:9 monitors get their full width in fullscreen. */
-static int s_view;   /* RecompRuntimeUiViewMode value: 0 native, 1 16:9, 2 adaptive */
-
-static int get_view_mode(void *ctx) { (void)ctx; return s_view; }
-
-static bool set_view_mode(void *ctx, int mode)
+static void apply_wide(int mode)
 {
-    (void)ctx;
-    static const int host[] = { NES_VIDEO_STOCK, NES_VIDEO_16_9, NES_VIDEO_FIT };
-    if (mode < 0 || mode > 2) return false;
-    s_view = mode;
+    if (mode < 0 || mode >= WIDE_COUNT) mode = 0;
+    s.wide = (uint8_t)mode;
     cyc_render_set_compositor(compose, NULL);
-    cyc_video_set_mode(host[mode]);
-    return true;
+    cyc_video_set_mode(NES_VIDEO_STOCK + mode);
 }
 
 /* ---- developer options (also used by the headless checks) ---- */
@@ -182,7 +183,7 @@ static const CycHostOption OPTIONS[] = {
     { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--cheat", true, "turn on a cheat for this run: lives, missiles" },
-    { "--widescreen", true, "presented width for this run: off, 16:9, 21:9, 32:9" },
+    { "--widescreen", true, "presented width: off, 16:9, 21:9, 32:9, fit" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
 
@@ -209,13 +210,9 @@ static bool option(void *ctx, const char *name, const char *value)
         return false;
     }
     if (!strcmp(name, "--widescreen")) {
-        static const char *const names[] = { "off", "16:9", "21:9", "32:9" };
-        for (int i = 0; i < 4; i++)
-            if (!strcmp(value, names[i])) {
-                cyc_render_set_compositor(compose, NULL);
-                cyc_video_set_mode(NES_VIDEO_STOCK + i);
-                return true;
-            }
+        static const char *const names[] = { "off", "16:9", "21:9", "32:9", "fit" };
+        for (int i = 0; i < WIDE_COUNT; i++)
+            if (!strcmp(value, names[i])) { apply_wide(i); return true; }
         return false;
     }
     if (!strcmp(name, "--mute")) {
@@ -237,6 +234,9 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.mute.2", "Audio", "Mute triangle", "Bass line.",                    RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.3", "Audio", "Mute noise",    "Drums, guns and explosions.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.4", "Audio", "Mute samples",  "Recorded sound clips (DMC).",   RECOMP_RUNTIME_UI_BOOL },
+    { "tg2.wide", "Graphics", "Widescreen",
+      "Fills wide and ultrawide screens in flight. Fit my screen matches any monitor, up to 32:9.",
+      RECOMP_RUNTIME_UI_CHOICE, 0, WIDE_COUNT - 1, 1, WIDE_NAMES, WIDE_COUNT },
     { "tg2.cheat.0", "Cheats", "Infinite lives",    "Losing a plane doesn't cost a life.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.1", "Cheats", "Infinite missiles", "Firing doesn't use up missiles.",       RECOMP_RUNTIME_UI_BOOL },
 };
@@ -252,6 +252,7 @@ static uint8_t *row_bits(const RecompRuntimeUiItem *item, int *bit)
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
+    if (!strcmp(item->key, "tg2.wide")) { *out = s.wide; return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
     if (!bits) return 0;
@@ -262,6 +263,7 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
+    if (!strcmp(item->key, "tg2.wide")) { apply_wide(value); return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
     if (!bits) return 0;
@@ -281,9 +283,6 @@ const CycHostExtras *cyc_host_extras(void)
         .menu_item_count = sizeof MENU / sizeof MENU[0],
         .menu_callbacks = &MENU_CB,
 #endif
-        .view_modes = 7,   /* native | fixed 16:9 | adaptive (recomp_runtime_ui.h) */
-        .get_view_mode = get_view_mode,
-        .set_view_mode = set_view_mode,
         .load_setting = load_setting,
         .save_settings = save_settings,
         .frame_begin = frame_begin,
