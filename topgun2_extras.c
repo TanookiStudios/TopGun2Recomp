@@ -6,6 +6,7 @@
  * Contains no ROM bytes. Everything here is applied to the running machine.
  */
 #include "cyc_host_extras.h"
+#include "hw_internal.h"   /* hw.ram: the 2 KB of CPU work RAM */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,17 @@ typedef struct {
 } Settings;
 
 static Settings s;
+static FILE *s_ram_trace;   /* --ram-trace: 2 KB of RAM appended per frame */
+
+/* --poke: RAM writes held every frame. Cheats and RAM mapping both use this. */
+typedef struct { uint16_t addr; uint8_t val; } Poke;
+static Poke s_pokes[32];
+static int  s_poke_count;
+
+static void apply_pokes(const Poke *p, int n)
+{
+    for (int i = 0; i < n; i++) hw.ram[p[i].addr & 0x7FF] = p[i].val;
+}
 
 /* ---- settings ([Game] section of config.ini) ---- */
 
@@ -55,15 +67,38 @@ static void frame_begin(void *ctx)
     hw_apu_mute_mask = s.mute;
 }
 
+static void frame_end(void *ctx)
+{
+    (void)ctx;
+    apply_pokes(s_pokes, s_poke_count);
+    if (s_ram_trace) fwrite(hw.ram, 1, sizeof hw.ram, s_ram_trace);
+}
+
 /* ---- developer options (also used by the headless checks) ---- */
 
 static const CycHostOption OPTIONS[] = {
+    { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
+    { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
 
 static bool option(void *ctx, const char *name, const char *value)
 {
     (void)ctx;
+    if (!strcmp(name, "--ram-trace")) {
+        s_ram_trace = fopen(value, "wb");
+        return s_ram_trace != NULL;
+    }
+    if (!strcmp(name, "--poke")) {
+        char buf[512];
+        snprintf(buf, sizeof buf, "%s", value);
+        for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+            unsigned a, v;
+            if (s_poke_count == 32 || sscanf(tok, "%x=%x", &a, &v) != 2 || a > 0x7FF || v > 0xFF) return false;
+            s_pokes[s_poke_count++] = (Poke){ (uint16_t)a, (uint8_t)v };
+        }
+        return true;
+    }
     if (!strcmp(name, "--mute")) {
         char *end;
         long v = strtol(value, &end, 0);
@@ -123,6 +158,7 @@ const CycHostExtras *cyc_host_extras(void)
         .load_setting = load_setting,
         .save_settings = save_settings,
         .frame_begin = frame_begin,
+        .frame_end = frame_end,
         .options = OPTIONS,
         .option_count = sizeof OPTIONS / sizeof OPTIONS[0],
         .option = option,
