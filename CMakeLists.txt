@@ -33,7 +33,11 @@ if(TARGET TopGun2 AND NOT TOPGUN2_HEADLESS)
     add_custom_command(TARGET TopGun2 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:TopGun2>/assets/img
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/signature.png
-                $<TARGET_FILE_DIR:TopGun2>/assets/img/maddie-signature.png)
+                $<TARGET_FILE_DIR:TopGun2>/assets/img/maddie-signature.png
+        # The launcher's header mark: our own icon instead of the console
+        # maker's logo (stb_image reads the PNG whatever the file is called).
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/assets/icon/topgun2-256.png
+                $<TARGET_FILE_DIR:TopGun2>/assets/img/brand_nes.tga)
 endif()
 
 # Program icon: Windows embeds it in the .exe; the Mac app gets it from
