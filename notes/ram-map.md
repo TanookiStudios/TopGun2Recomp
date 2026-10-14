@@ -33,3 +33,11 @@ what the screen shows.
 - Searching RAM for HUD numbers as BCD or digit bytes fails: digits are tile = digit + 3,
   and the source is a binary value.
 - $006B looks like fuel at a glance (250 -> 200) but changes every ~8 frames to random values: an RNG, not fuel.
+
+## Widescreen (topgun2_extras.c compose)
+- In flight ($51 == 1) sky/sea rows extend with each row's most common color; rows the
+  split scrolls into the lower nametables (line scroll Y >= 240) are cockpit -> dark bezel.
+- Verified: 16:9 = 426 px, 21:9 = 560 px; title stays pillarboxed (black wings);
+  6000-frame --hash-out identical with and without widescreen (presentation only).
+- Known limit: enemies only exist on screen inside the native 256 columns; the wings
+  show sky, never planes.

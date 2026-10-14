@@ -7,6 +7,8 @@
  */
 #include "cyc_host_extras.h"
 #include "hw_internal.h"   /* hw.ram: the 2 KB of CPU work RAM */
+#include "cyc_render.h"
+#include "cyc_video.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,12 +113,74 @@ static void frame_end(void *ctx)
     if (s_ram_trace) fwrite(hw.ram, 1, sizeof hw.ram, s_ram_trace);
 }
 
+/* ---- widescreen ----
+ *
+ * The NES draws 256 columns; the host gives us a wider canvas. In flight the
+ * view above the cockpit is horizontal sky/sea bands, so each row's wings take
+ * that row's most common color from just inside the native picture (a sprite
+ * at the edge can't streak across). Cockpit rows - the ones the mid-frame
+ * split scrolls into the lower nametables - get a dark bezel. Anything not in
+ * flight (title, menus, briefing art) stays pillarboxed. */
+
+#define BEZEL 0xFF101018u
+
+/* A row's most common color across columns 8..247 (past the NES left-column
+ * mask). Sky/sea bands span the whole row, so this outvotes any sprite. */
+static uint32_t row_band_color(const uint32_t *row)
+{
+    uint32_t best = row[8];
+    int best_n = 0;
+    for (int i = 8; i < 248; i += 16) {
+        int n = 0;
+        for (int j = 8; j < 248; j += 2) n += row[j] == row[i];
+        if (n > best_n) best_n = n, best = row[i];
+    }
+    return best;
+}
+
+static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
+{
+    (void)user;
+    if (!IN_FLIGHT) return 0;
+    for (int y = 0; y < height; y++) {
+        const uint32_t *src = native + y * 256;
+        uint32_t *dst = out + y * width;
+        bool cockpit = cyc_render_line_scroll_y(y) >= 240;
+        uint32_t band = cockpit ? BEZEL : row_band_color(src);
+        for (int x = 0; x < x0; x++) dst[x] = band;
+        memcpy(dst + x0, src, 256 * sizeof *src);
+        /* The game hides the leftmost 8 columns (PPUMASK); in the sky that
+         * would be a black stripe between the wing and the picture. */
+        if (!cockpit) for (int x = 0; x < 8; x++) dst[x0 + x] = band;
+        for (int x = x0 + 256; x < width; x++) dst[x] = band;
+    }
+    return 1;
+}
+
+/* Menu view modes -> host widths. Adaptive follows the window, so 21:9 and
+ * 32:9 monitors get their full width in fullscreen. */
+static int s_view;   /* RecompRuntimeUiViewMode value: 0 native, 1 16:9, 2 adaptive */
+
+static int get_view_mode(void *ctx) { (void)ctx; return s_view; }
+
+static bool set_view_mode(void *ctx, int mode)
+{
+    (void)ctx;
+    static const int host[] = { NES_VIDEO_STOCK, NES_VIDEO_16_9, NES_VIDEO_FIT };
+    if (mode < 0 || mode > 2) return false;
+    s_view = mode;
+    cyc_render_set_compositor(compose, NULL);
+    cyc_video_set_mode(host[mode]);
+    return true;
+}
+
 /* ---- developer options (also used by the headless checks) ---- */
 
 static const CycHostOption OPTIONS[] = {
     { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--cheat", true, "turn on a cheat for this run: lives, missiles" },
+    { "--widescreen", true, "presented width for this run: off, 16:9, 21:9, 32:9" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
 
@@ -140,6 +204,16 @@ static bool option(void *ctx, const char *name, const char *value)
     if (!strcmp(name, "--cheat")) {
         for (int i = 0; i < CHEAT_COUNT; i++)
             if (!strcmp(value, CHEATS[i].option)) { s.cheats |= (uint8_t)(1u << i); return true; }
+        return false;
+    }
+    if (!strcmp(name, "--widescreen")) {
+        static const char *const names[] = { "off", "16:9", "21:9", "32:9" };
+        for (int i = 0; i < 4; i++)
+            if (!strcmp(value, names[i])) {
+                cyc_render_set_compositor(compose, NULL);
+                cyc_video_set_mode(NES_VIDEO_STOCK + i);
+                return true;
+            }
         return false;
     }
     if (!strcmp(name, "--mute")) {
@@ -205,6 +279,9 @@ const CycHostExtras *cyc_host_extras(void)
         .menu_item_count = sizeof MENU / sizeof MENU[0],
         .menu_callbacks = &MENU_CB,
 #endif
+        .view_modes = 7,   /* native | fixed 16:9 | adaptive (recomp_runtime_ui.h) */
+        .get_view_mode = get_view_mode,
+        .set_view_mode = set_view_mode,
         .load_setting = load_setting,
         .save_settings = save_settings,
         .frame_begin = frame_begin,
