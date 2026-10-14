@@ -12,6 +12,10 @@ what the screen shows.
 | $0051 | 0 on title/menus, 1 from take-off on (stays 1 through deaths) | gate for cheats; holding $45 from power-on froze the title |
 | $0057 | Selected missile type (index) | firing code LDY $57 / LDA $0068,Y / SBC #1 / STA $0068,Y (PRG bank 10) |
 | $0068-$006A | Missiles left per type ($68+type). Mission 1: 60, 60, 0 | `--poke 68=05` -> HUD shows 05. Infinite-missile cheat not yet seen fire: scripted runs never lock a target |
+| $0048 | Stage. Briefings at stages 0, 2, 5 = missions 1, 2, 3; stages between are later legs | `--poke 48=02` -> briefing types "MISSION #2"; text ID = $48 + $34 (code at $A770, PRG bank 3) |
+| $0050 | Game state: 1 mission intro/briefing, 2-4 launch, 5 flying, 6 hit, 11-15 crash/reload | skip: $48 = next mission start, $50 = 1 -> next briefing, then 2,3,4,5 |
+| $0052 | Event code, set and consumed in one frame: 2 = player destroyed ($8BB9 -> $F452) | trace of frame 5319 |
+| $0440 | Player plane: 0x40 flying, 0xE1 enemy missile closing, 0xCx hit (C8, C2 seen) | can't-be-hit cheat resets 0xCx -> 0x40; 30000-frame idle run, no losses |
 | $078E | Missile count last drawn on the HUD; code at $A765 redraws when $68 != $78E | trace of frame 3677 |
 
 ## How the HUD is drawn

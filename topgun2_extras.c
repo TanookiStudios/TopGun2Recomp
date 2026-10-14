@@ -48,7 +48,14 @@ typedef struct {
     uint8_t mute;     /* bit per channel, CH_KEYS order */
     uint8_t cheats;   /* bit per CHEATS entry */
     uint8_t wide;     /* WIDE_NAMES index: 0 off .. 4 fit the window */
+    uint8_t start;    /* START_NAMES index: which mission a new game begins on */
 } Settings;
+
+/* $48 is the stage. Briefings appear at stages 0, 2 and 5 (missions 1-3);
+ * the stages between are later legs of the same mission (notes/ram-map.md). */
+static const char *const START_NAMES[] = { "Mission 1", "Mission 2", "Mission 3" };
+static const uint8_t START_STAGE[] = { 0, 2, 5 };
+enum { START_COUNT = 3 };
 
 /* Widescreen choices, in NES_VIDEO_* order (common/nes_video_geometry.h):
  * stock 256, 16:9 426, 21:9 560, 32:9 854, fit = the window's own shape. */
@@ -78,6 +85,7 @@ static void load_setting(void *ctx, const char *key, const char *value)
 {
     (void)ctx;
     if (!strcmp(key, "Widescreen")) apply_wide(atoi(value));
+    if (!strcmp(key, "StartMission")) { int v = atoi(value) - 1; s.start = (uint8_t)(v > 0 && v < START_COUNT ? v : 0); }
     for (int i = 0; i < CHEAT_COUNT; i++)
         if (!strcmp(key, CHEATS[i].key)) {
             if (atoi(value)) s.cheats |= (uint8_t)(1u << i);
@@ -98,6 +106,7 @@ static void save_settings(void *ctx, FILE *f)
     for (int i = 0; i < CHEAT_COUNT; i++)
         fprintf(f, "%s = %d\n", CHEATS[i].key, (s.cheats >> i) & 1);
     fprintf(f, "# 0 off, 1 16:9, 2 21:9, 3 32:9, 4 fit the window\nWidescreen = %d\n", s.wide);
+    fprintf(f, "StartMission = %d\n", s.start + 1);
 }
 
 /* ---- per frame ---- */
@@ -115,6 +124,10 @@ static uint8_t s_cheat_prev[CHEAT_COUNT][4];
 
 static void apply_cheats(void)
 {
+    /* Start at mission N: hold the stage until the first take-off, then let the
+     * game run its own course. */
+    uint8_t start = s_cli.start ? s_cli.start : s.start;
+    if (start && !IN_FLIGHT) hw.ram[0x048] = START_STAGE[start];
     if (((s.cheats | s_cli.cheats) >> CHEAT_NOHIT & 1) && IN_FLIGHT && (hw.ram[0x440] & 0xF0) == 0xC0)
         hw.ram[0x440] = 0x40;
     for (int i = 0; i < CHEAT_COUNT; i++)
@@ -126,9 +139,29 @@ static void apply_cheats(void)
         }
 }
 
+/* Skip to the next mission: set the stage to the next mission's first stage
+ * and put the game in state 1, its mission intro ($50: 1 briefing -> 2,3,4
+ * launch -> 5 flying). Verified: the next briefing is typed out. */
+static bool s_skip_pending;
+static long s_skip_at = -1, s_frame;
+
+static void do_skip(void)
+{
+    if (!IN_FLIGHT || hw.ram[0x050] != 5) return;   /* only from normal flight */
+    uint8_t stage = hw.ram[0x048], next = 0;
+    for (int i = 0; i < START_COUNT; i++)
+        if (START_STAGE[i] > stage) { next = START_STAGE[i]; break; }
+    if (!next) return;                               /* already on the last mission */
+    hw.ram[0x048] = next;
+    hw.ram[0x440] = 0x40;
+    hw.ram[0x050] = 1;   /* mission intro: briefing, then launch */
+}
+
 static void frame_end(void *ctx)
 {
     (void)ctx;
+    s_frame++;
+    if (s_skip_pending || s_frame == s_skip_at) { s_skip_pending = false; do_skip(); }
     apply_cheats();
     apply_pokes(s_pokes, s_poke_count);
     if (s_ram_trace) fwrite(hw.ram, 1, sizeof hw.ram, s_ram_trace);
@@ -193,6 +226,8 @@ static const CycHostOption OPTIONS[] = {
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--cheat", true, "turn on a cheat for this run: lives, missiles, nohit" },
     { "--widescreen", true, "presented width: off, 16:9, 21:9, 32:9, fit" },
+    { "--skip-at", true, "skip to the next mission at frame N (testing)" },
+    { "--start-mission", true, "begin new games on mission 1, 2 or 3 (this run only)" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
 
@@ -224,6 +259,16 @@ static bool option(void *ctx, const char *name, const char *value)
             if (!strcmp(value, names[i])) { apply_wide(i); return true; }
         return false;
     }
+    if (!strcmp(name, "--skip-at")) {
+        s_skip_at = strtol(value, NULL, 10);
+        return s_skip_at > 0;
+    }
+    if (!strcmp(name, "--start-mission")) {
+        int v = atoi(value) - 1;
+        if (v < 0 || v >= START_COUNT) return false;
+        s_cli.start = (uint8_t)v;
+        return true;
+    }
     if (!strcmp(name, "--mute")) {
         char *end;
         long v = strtol(value, &end, 0);
@@ -246,6 +291,10 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.wide", "Graphics", "Widescreen",
       "Fills wide and ultrawide screens in flight. Fit my screen matches any monitor, up to 32:9.",
       RECOMP_RUNTIME_UI_CHOICE, 0, WIDE_COUNT - 1, 1, WIDE_NAMES, WIDE_COUNT },
+    { "tg2.start", "Cheats", "Start at mission", "New games begin on this mission.",
+      RECOMP_RUNTIME_UI_CHOICE, 0, START_COUNT - 1, 1, START_NAMES, START_COUNT },
+    { "tg2.skip", "Cheats", "Skip to next mission", "Jumps to the next mission's briefing. Works while flying.",
+      RECOMP_RUNTIME_UI_ACTION },
     { "tg2.cheat.0", "Cheats", "Infinite lives",    "Losing a plane doesn't cost a life.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.1", "Cheats", "Infinite missiles", "Firing doesn't use up missiles.",       RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.2", "Cheats", "Can't be hit", "Enemy missiles never hit your plane.",           RECOMP_RUNTIME_UI_BOOL },
@@ -263,6 +312,7 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
     if (!strcmp(item->key, "tg2.wide")) { *out = s.wide; return 1; }
+    if (!strcmp(item->key, "tg2.start")) { *out = s.start; return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
     if (!bits) return 0;
@@ -274,6 +324,7 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
     if (!strcmp(item->key, "tg2.wide")) { apply_wide(value); return 1; }
+    if (!strcmp(item->key, "tg2.start")) { s.start = (uint8_t)(value >= 0 && value < START_COUNT ? value : 0); return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
     if (!bits) return 0;
@@ -282,7 +333,15 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
     return 1;
 }
 
-static const RecompRuntimeUiCallbacks MENU_CB = { NULL, get_value, set_value };
+static int run_action(void *ctx, const RecompRuntimeUiItem *item)
+{
+    (void)ctx;
+    if (strcmp(item->key, "tg2.skip")) return 0;
+    s_skip_pending = true;   /* applied at the end of the next frame */
+    return 1;
+}
+
+static const RecompRuntimeUiCallbacks MENU_CB = { NULL, get_value, set_value, run_action };
 #endif
 
 const CycHostExtras *cyc_host_extras(void)

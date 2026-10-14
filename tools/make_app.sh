@@ -29,6 +29,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 codesign --force --deep --sign - "$APP" 2>/dev/null
 # Finished games always go to Downloads (Maddie, 14 Oct 2026).
+# Keep the player's settings, remembered ROM and saves across rebuilds.
+DL="$HOME/Downloads/Top Gun 2.app/Contents/MacOS"
+KEEP="$(mktemp -d)"
+for f in config.ini rom.cfg launcher-window.ini saves; do
+    [ -e "$DL/$f" ] && cp -R "$DL/$f" "$KEEP/"
+done
 rm -rf "$HOME/Downloads/Top Gun 2.app"
 cp -R "$APP" "$HOME/Downloads/"
+cp -R "$KEEP"/. "$DL/" 2>/dev/null || true
+rm -rf "$KEEP"
+codesign --force --deep --sign - "$HOME/Downloads/Top Gun 2.app" 2>/dev/null
 echo "$HOME/Downloads/Top Gun 2.app"
