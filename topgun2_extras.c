@@ -293,7 +293,7 @@ static const char ABOUT_TEXT[] =
     "I love old NES games, and I wanted to play them on a modern computer the way they "
     "deserve: crisp pixels at any size, a real settings screen, controllers that just work, "
     "and a few cheats for when a mission is being mean. So I rebuilt Top Gun: The Second "
-    "Mission as a native program for Mac and Windows.\n\n"
+    "Mission as a native program for Mac, Windows and Linux.\n\n"
     "It's free, and it'll stay free. You bring your own copy of the game; nothing from the "
     "original cartridge ships with this. It isn't made by or affiliated with Konami, "
     "Paramount or Nintendo.\n\n"

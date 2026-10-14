@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Top Gun 2
+Comment=Top Gun: The Second Mission, rebuilt as a native program (bring your own ROM)
+Exec=TopGun2
+Icon=topgun2
+Categories=Game;ArcadeGame;
+Terminal=false
