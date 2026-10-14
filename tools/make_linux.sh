@@ -12,6 +12,7 @@ OUT=dist/TopGun2-Linux
 rm -rf "$OUT" "$OUT.tar.gz"; mkdir -p "$OUT"
 cp build-linux/TopGun2 "$OUT/"
 cp -R build-linux/assets "$OUT/assets"
+cp LICENSE THIRD_PARTY_NOTICES.md "$OUT/"
 cp assets/icon/topgun2-256.png "$OUT/topgun2.png"
 cp tools/linux/topgun2.desktop tools/linux/README-Linux.txt tools/linux/install-shortcut.sh "$OUT/"
 tar -C dist -czf "$OUT.tar.gz" TopGun2-Linux

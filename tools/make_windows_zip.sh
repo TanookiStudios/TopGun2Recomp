@@ -13,6 +13,7 @@ rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT"
 cp build-win/TopGun2.exe build-win/SDL2.dll "$OUT/"
 cp -R build-win/assets "$OUT/assets"
+cp LICENSE THIRD_PARTY_NOTICES.md "$OUT/"
 ( cd dist && zip -qr TopGun2-Windows.zip TopGun2-Windows )
 # Finished games always go to Downloads (Maddie, 14 Oct 2026).
 cp -f dist/TopGun2-Windows.zip "$HOME/Downloads/"

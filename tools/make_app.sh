@@ -28,6 +28,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp build-mac/TopGun2 "$APP/Contents/MacOS/TopGun2"
 cp -R build-mac/assets "$APP/Contents/MacOS/assets"
 cp assets/icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true); VERSION=${VERSION:-0.1.0}
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
