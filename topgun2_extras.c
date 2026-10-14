@@ -7,11 +7,8 @@
  */
 #include "cyc_host_extras.h"
 #include "hw_internal.h"   /* hw.ram: the 2 KB of CPU work RAM */
-#include "cyc_render.h"
-#include "cyc_video.h"
 #include "cpu6502.h"     /* cpu.do_reset: the console's Reset button */
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,7 +46,6 @@ enum { CHEAT_COUNT = sizeof CHEATS / sizeof CHEATS[0] };
 typedef struct {
     uint8_t mute;     /* bit per channel, CH_KEYS order */
     uint8_t cheats;   /* bit per CHEATS entry */
-    uint8_t wide;     /* WIDE_NAMES index: 0 off .. 4 fit the window */
     uint8_t start;    /* START_NAMES index: which mission a new game begins on */
 } Settings;
 
@@ -59,10 +55,6 @@ static const char *const START_NAMES[] = { "Mission 1", "Mission 2", "Mission 3"
 static const uint8_t START_STAGE[] = { 0, 2, 5 };
 enum { START_COUNT = 3 };
 
-/* Widescreen choices, in NES_VIDEO_* order (common/nes_video_geometry.h):
- * stock 256, 16:9 426, 21:9 560, 32:9 854, fit = the window's own shape. */
-static const char *const WIDE_NAMES[] = { "Off", "16:9", "21:9", "32:9", "Fit my screen" };
-enum { WIDE_COUNT = 5 };
 
 static Settings s;
 /* Command-line --cheat / --mute: this run only, never written to config.ini. */
@@ -81,12 +73,9 @@ static void apply_pokes(const Poke *p, int n)
 
 /* ---- settings ([Game] section of config.ini) ---- */
 
-static void apply_wide(int mode);
-
 static void load_setting(void *ctx, const char *key, const char *value)
 {
     (void)ctx;
-    if (!strcmp(key, "Widescreen")) apply_wide(atoi(value));
     if (!strcmp(key, "StartMission")) { int v = atoi(value) - 1; s.start = (uint8_t)(v > 0 && v < START_COUNT ? v : 0); }
     for (int i = 0; i < CHEAT_COUNT; i++)
         if (!strcmp(key, CHEATS[i].key)) {
@@ -107,7 +96,6 @@ static void save_settings(void *ctx, FILE *f)
         fprintf(f, "%s = %d\n", CH_KEYS[i], (s.mute >> i) & 1);
     for (int i = 0; i < CHEAT_COUNT; i++)
         fprintf(f, "%s = %d\n", CHEATS[i].key, (s.cheats >> i) & 1);
-    fprintf(f, "# 0 off, 1 16:9, 2 21:9, 3 32:9, 4 fit the window\nWidescreen = %d\n", s.wide);
     fprintf(f, "StartMission = %d\n", s.start + 1);
 }
 
@@ -165,122 +153,14 @@ static void do_skip(void)
     hw.ram[0x050] = 1;   /* mission intro: briefing, then launch */
 }
 
-static long s_lines_at = -1;   /* --dump-lines: print each row's scroll at frame N */
-
 static void frame_end(void *ctx)
 {
     (void)ctx;
     s_frame++;
-    if (s_frame == s_lines_at)
-        for (int y = 0; y < 240; y++)
-            printf("line %3d scroll x=%3d y=%3d\n", y, cyc_render_line_scroll_x(y), cyc_render_line_scroll_y(y));
     if (s_skip_pending || s_frame == s_skip_at) { s_skip_pending = false; do_skip(); }
     apply_cheats();
     apply_pokes(s_pokes, s_poke_count);
     if (s_ram_trace) fwrite(hw.ram, 1, sizeof hw.ram, s_ram_trace);
-}
-
-/* ---- widescreen ----
- *
- * The NES draws 256 columns; the host gives us a wider canvas. Only while
- * flying ($50 == 5): the launch deck, crashes, briefings and menus stay
- * pillarboxed. Rows the mid-frame split scrolls to the right-hand nametable
- * (line scroll X >= 256) are the cockpit and get a dark bezel; the sky is
- * always drawn from the left one, level or banked (its Y scroll does pass 240
- * when the nose is down, so Y can't tell them apart).
- *
- * The view above the cockpit is sky/sea bands that tilt when the plane banks.
- * Each frame the tilt is measured from where the same color boundary sits at
- * the left and right edges of the native picture, and each wing pixel takes
- * the color the band it lies on has at the nearest edge. */
-
-#define BEZEL 0xFF101018u
-#define EDGE_L 8      /* first column past the NES left-column mask */
-#define EDGE_R 247
-
-static uint32_t edge_color(const uint32_t *row, int x)
-{
-    /* Majority of 4 neighbors toward the inside, so a lone sprite pixel on the
-     * edge column can't paint a stripe across the wing. */
-    int dir = x < 128 ? 1 : -1;
-    uint32_t c[4];
-    for (int i = 0; i < 4; i++) c[i] = row[x + dir * i];
-    for (int i = 0; i < 4; i++) {
-        int n = 0;
-        for (int j = 0; j < 4; j++) n += c[j] == c[i];
-        if (n >= 2) return c[i];
-    }
-    return c[0];
-}
-
-/* Slope (rows per column) of the band boundaries, from color transitions
- * matched down both edges between rows top..bot; 0 when none match. */
-static double band_slope(const uint32_t *l, const uint32_t *r, int top, int bot)
-{
-    double sum = 0;
-    int n = 0;
-    for (int y = top + 1; y <= bot; y++) {
-        if (l[y] == l[y - 1]) continue;
-        int best = -1;   /* the same boundary on the right edge, nearest to y */
-        for (int d = 0; d <= bot - top && best < 0; d++) {
-            int ys[2] = { y - d, y + d };
-            for (int k = 0; k < 2 && best < 0; k++)
-                if (ys[k] > top && ys[k] <= bot && r[ys[k]] == l[y] && r[ys[k] - 1] == l[y - 1]) best = ys[k];
-        }
-        if (best >= 0) { sum += (double)(best - y) / (EDGE_R - EDGE_L); n++; }
-    }
-    return n ? sum / n : 0.0;
-}
-
-static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
-{
-    (void)user;
-    if (!IN_FLIGHT || hw.ram[0x050] != 5 || height > 240) return 0;
-
-    static uint32_t colL[240], colR[240], bg[256 * 240];
-    static bool cockpit[240];
-    /* Edge colors from the background alone, so an enemy plane crossing the
-     * edge can't be smeared across the wing; the native picture if the
-     * capture isn't available. */
-    const uint32_t *edges = cyc_render_background(bg) ? bg : native;
-    int top = -1, bot = -1;
-    for (int y = 0; y < height; y++) {
-        cockpit[y] = cyc_render_line_scroll_x(y) >= 256;   /* --dump-lines: sky x=0, cockpit x=256 */
-        colL[y] = edge_color(edges + y * 256, EDGE_L);
-        colR[y] = edge_color(edges + y * 256, EDGE_R);
-        if (!cockpit[y]) { if (top < 0) top = y; bot = y; }
-    }
-    if (top < 0) return 0;
-    double slope = band_slope(colL, colR, top, bot);
-
-    for (int y = 0; y < height; y++) {
-        const uint32_t *src = native + y * 256;
-        uint32_t *dst = out + y * width;
-        memcpy(dst + x0, src, 256 * sizeof *src);
-        if (cockpit[y]) {
-            for (int x = 0; x < x0; x++) dst[x] = BEZEL;
-            for (int x = x0 + 256; x < width; x++) dst[x] = BEZEL;
-            continue;
-        }
-        for (int x = 0; x < x0 + EDGE_L; x++) {   /* left wing + masked columns 0..7 */
-            int ys = (int)lround(y - slope * (x - (x0 + EDGE_L)));
-            dst[x] = colL[ys < top ? top : ys > bot ? bot : ys];
-        }
-        for (int x = x0 + 256; x < width; x++) {
-            int ys = (int)lround(y - slope * (x - (x0 + EDGE_R)));
-            dst[x] = colR[ys < top ? top : ys > bot ? bot : ys];
-        }
-    }
-    return 1;
-}
-
-static void apply_wide(int mode)
-{
-    if (mode < 0 || mode >= WIDE_COUNT) mode = 0;
-    s.wide = (uint8_t)mode;
-    cyc_render_set_compositor(compose, NULL);
-    cyc_render_capture_background(mode != 0);   /* sprite-free picture for the wing colors */
-    cyc_video_set_mode(NES_VIDEO_STOCK + mode);
 }
 
 /* ---- developer options (also used by the headless checks) ---- */
@@ -289,8 +169,6 @@ static const CycHostOption OPTIONS[] = {
     { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--cheat", true, "turn on a cheat for this run: lives, missiles, nohit" },
-    { "--widescreen", true, "presented width: off, 16:9, 21:9, 32:9, fit" },
-    { "--dump-lines", true, "print every row's background scroll at frame N (testing)" },
     { "--reset-at", true, "press the console's Reset button at frame N (testing)" },
     { "--skip-at", true, "skip to the next mission at frame N (testing)" },
     { "--start-mission", true, "begin new games on mission 1, 2 or 3 (this run only)" },
@@ -319,13 +197,6 @@ static bool option(void *ctx, const char *name, const char *value)
             if (!strcmp(value, CHEATS[i].option)) { s_cli.cheats |= (uint8_t)(1u << i); return true; }
         return false;
     }
-    if (!strcmp(name, "--widescreen")) {
-        static const char *const names[] = { "off", "16:9", "21:9", "32:9", "fit" };
-        for (int i = 0; i < WIDE_COUNT; i++)
-            if (!strcmp(value, names[i])) { apply_wide(i); return true; }
-        return false;
-    }
-    if (!strcmp(name, "--dump-lines")) { s_lines_at = strtol(value, NULL, 10); return s_lines_at > 0; }
     if (!strcmp(name, "--reset-at")) {
         s_reset_at = strtol(value, NULL, 10);
         return s_reset_at > 0;
@@ -361,9 +232,6 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.mute.4", "Audio", "Mute samples",  "Recorded sound clips (DMC).",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.reset", "System", "Reset game", "Like pressing Reset on the console: back to the title screen.",
       RECOMP_RUNTIME_UI_ACTION },
-    { "tg2.wide", "Graphics", "Widescreen",
-      "Fills wide and ultrawide screens in flight. Fit my screen matches any monitor, up to 32:9.",
-      RECOMP_RUNTIME_UI_CHOICE, 0, WIDE_COUNT - 1, 1, WIDE_NAMES, WIDE_COUNT },
     { "tg2.start", "Cheats", "Start at mission", "New games begin on this mission.",
       RECOMP_RUNTIME_UI_CHOICE, 0, START_COUNT - 1, 1, START_NAMES, START_COUNT },
     { "tg2.skip", "Cheats", "Skip to next mission", "Jumps to the next mission's briefing. Works while flying.",
@@ -384,7 +252,6 @@ static uint8_t *row_bits(const RecompRuntimeUiItem *item, int *bit)
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
-    if (!strcmp(item->key, "tg2.wide")) { *out = s.wide; return 1; }
     if (!strcmp(item->key, "tg2.start")) { *out = s.start; return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
@@ -396,7 +263,6 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
-    if (!strcmp(item->key, "tg2.wide")) { apply_wide(value); return 1; }
     if (!strcmp(item->key, "tg2.start")) { s.start = (uint8_t)(value >= 0 && value < START_COUNT ? value : 0); return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
@@ -421,6 +287,19 @@ static int run_action(void *ctx, const RecompRuntimeUiItem *item)
 static const RecompRuntimeUiCallbacks MENU_CB = { NULL, get_value, set_value, run_action };
 #endif
 
+/* The launcher's About page. Blank lines split paragraphs. */
+static const char ABOUT_TEXT[] =
+    "Hi, I'm Maddie. I make apps and games on my own at Tanooki Studios.\n\n"
+    "I love old NES games, and I wanted to play them on a modern computer the way they "
+    "deserve: crisp pixels at any size, a real settings screen, controllers that just work, "
+    "and a few cheats for when a mission is being mean. So I rebuilt Top Gun: The Second "
+    "Mission as a native program for Mac and Windows.\n\n"
+    "It's free, and it'll stay free. You bring your own copy of the game; nothing from the "
+    "original cartridge ships with this. It isn't made by or affiliated with Konami, "
+    "Paramount or Nintendo.\n\n"
+    "Making these is how I pay my bills, though. If this made you smile, a tip helps me "
+    "keep going. No pressure at all.";
+
 const CycHostExtras *cyc_host_extras(void)
 {
     static const CycHostExtras extras = {
@@ -436,6 +315,10 @@ const CycHostExtras *cyc_host_extras(void)
         .options = OPTIONS,
         .option_count = sizeof OPTIONS / sizeof OPTIONS[0],
         .option = option,
+        .about_text = ABOUT_TEXT,
+        .about_image = "maddie-signature.png",   /* assets/signature.png, staged by CMakeLists.txt */
+        .about_link_url = "https://tanookistudios.com/SupportMe",
+        .about_link_label = "Leave a Tip",
     };
     return &extras;
 }

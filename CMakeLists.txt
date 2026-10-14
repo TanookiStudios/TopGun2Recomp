@@ -27,3 +27,11 @@ nesrecomp_add_cycle_game(TopGun2
 if(WIN32 AND TARGET TopGun2)
     set_target_properties(TopGun2 PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
+
+# Maddie's signature for the launcher's About page (assets/img beside the program).
+if(TARGET TopGun2 AND NOT TOPGUN2_HEADLESS)
+    add_custom_command(TARGET TopGun2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:TopGun2>/assets/img
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/signature.png
+                $<TARGET_FILE_DIR:TopGun2>/assets/img/maddie-signature.png)
+endif()

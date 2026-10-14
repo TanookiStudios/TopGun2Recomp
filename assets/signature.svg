@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 116" width="200" height="64" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Signed, Maddie" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round">
+  <title>Maddie</title>
+  <g transform="rotate(-4 160 66) skewX(-8)">
+    <path d="M2 72 C 12 69 22 69 32 68" opacity="0.85"></path>
+    <path d="M50 92 C 46 66 48 34 56 30 C 62 27 62 46 63 62 C 64 74 63 84 68 90 C 74 64 84 40 92 46 C 97 58 95 80 102 90 C 106 94 114 92 118 84 C 122 72 108 68 106 80 C 105 90 118 94 121 84 C 122 76 122 82 126 90 C 130 94 138 92 141 84 C 144 72 130 68 128 80 C 127 90 140 94 143 84 C 145 60 149 26 152 27 C 154 26 153 42 152 54 C 151 68 149 82 155 90 C 159 94 167 92 170 84 C 173 72 159 68 157 80 C 156 90 169 94 172 84 C 174 60 178 26 181 27 C 183 26 182 42 181 54 C 180 68 178 82 184 90 C 188 94 193 82 194 74 C 195 80 194 88 199 90 C 205 86 214 82 216 74 C 218 66 205 64 202 72 C 199 82 210 90 222 84 C 242 96 278 96 306 74 C 316 67 320 62 323 63"></path>
+    <circle cx="196" cy="48" r="2.4" fill="currentColor" stroke="none"></circle>
+  </g>
+</svg>

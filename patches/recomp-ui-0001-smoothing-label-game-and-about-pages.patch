@@ -1,0 +1,290 @@
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index cbae6e9..681afc7 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -30,6 +30,7 @@
+ #include "launcher_sdlcompat.h"   // pulls the right SDL header + event shim
+ 
+ #include "imgui.h"
++#include "recomp_runtime_ui.h"   // GameInfo.game_items rows
+ #include "launcher_nav.h"
+ #if defined(LNG_SDL3)
+   #include "imgui_impl_sdl3.h"
+@@ -360,6 +361,7 @@ LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard
+ // Optional platform wordmark (SystemProfile.wordmark_image) — rendered in the
+ // header instead of the platform text when the asset is present. Absent => text.
+ LauncherTexture g_wordmark;
++LauncherTexture g_about_image;   // GameInfo.about_image (a signature)
+ // N64 Transfer Pak cartridge art, indexed by host cart_kind: [0] empty/unknown
+ // (gray GB shell), [1] red, [2] blue, [3] yellow, [4] green. Loaded only for a
+ // tpak game; real GB cart PNGs from the legacy launchers (assets/consoles/n64).
+@@ -3966,7 +3968,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+                               ImVec2(px(180), px(30))))
+                 launcher_model_cycle_scaling_filter(m);
+         } else {
+-            row_label_right("Linear filtering", th, cb);
++            row_label_right("Smooth pixels (blurry)", th, cb);
+             bool filter = m->s.linear_filter != 0;
+             if (ImGui::Checkbox("##filter", &filter))
+                 launcher_model_toggle_filter(m);
+@@ -4202,7 +4204,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+         if (ImGui::Button(ui_text(launcher_model_texture_filter_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+             launcher_model_toggle_texture_filter(m);
+     } else {
+-        row_label_right("Linear filtering", th, cb);
++        row_label_right("Smooth pixels (blurry)", th, cb);
+         bool filter = m->s.linear_filter != 0;
+         if (ImGui::Checkbox("##filter", &filter)) launcher_model_toggle_filter(m);
+     }
+@@ -5477,6 +5479,98 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
+     end_panel();
+ }
+ 
++/* The title's own options, before boot (GameInfo.game_items). ACTION rows
++ * are skipped: there is no running game for them to act on yet. */
++void draw_game_page(LauncherModel* m, const LauncherTheme& th) {
++    if (!begin_panel("game_page", 0, false)) {
++        end_panel();
++        return;
++    }
++    const RecompRuntimeUiCallbacks* cb = m->game_callbacks;
++    const char* section = nullptr;
++    for (size_t i = 0; cb && i < m->game_item_count; ++i) {
++        const RecompRuntimeUiItem* it = &m->game_items[i];
++        if (it->type == RECOMP_RUNTIME_UI_ACTION) continue;
++        const char* sec = it->section ? it->section : "";
++        if (!section || strcmp(section, sec) != 0) {
++            if (section) ImGui::Dummy(ImVec2(0, px(10.0f)));
++            section = sec;
++            eyebrow(sec);
++        }
++        ImGui::PushID((int)i);
++        int v = 0;
++        if (cb->get_value) cb->get_value(cb->context, it, &v);
++        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text));
++        if (it->type == RECOMP_RUNTIME_UI_BOOL) {
++            bool b = v != 0;
++            if (ImGui::Checkbox(it->label, &b) && cb->set_value) cb->set_value(cb->context, it, b ? 1 : 0);
++        } else if (it->type == RECOMP_RUNTIME_UI_CHOICE && it->choices && it->choice_count) {
++            int cur = -1;
++            for (size_t c = 0; c < it->choice_count; ++c) {
++                int cv = it->choice_values ? it->choice_values[c] : it->minimum + (int)c;
++                if (cv == v) cur = (int)c;
++            }
++            ImGui::SetNextItemWidth(px(220.0f));
++            if (ImGui::BeginCombo(it->label, cur >= 0 ? it->choices[cur] : "")) {
++                for (size_t c = 0; c < it->choice_count; ++c) {
++                    int cv = it->choice_values ? it->choice_values[c] : it->minimum + (int)c;
++                    if (ImGui::Selectable(it->choices[c], (int)c == cur) && cb->set_value)
++                        cb->set_value(cb->context, it, cv);
++                }
++                ImGui::EndCombo();
++            }
++        } else {
++            ImGui::TextUnformatted(it->label ? it->label : "");
++        }
++        ImGui::PopStyleColor();
++        if (it->description && it->description[0]) {
++            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
++            ImGui::PushTextWrapPos();
++            ImGui::TextWrapped("%s", it->description);
++            ImGui::PopTextWrapPos();
++            ImGui::PopStyleColor();
++        }
++        ImGui::Dummy(ImVec2(0, px(4.0f)));
++        ImGui::PopID();
++    }
++    end_panel();
++}
++
++/* GameInfo.about_text, then about_image (a signature) and the link button. */
++void draw_about(LauncherModel* m, const LauncherTheme& th) {
++    if (!begin_panel("about_page", 0, false)) {
++        end_panel();
++        return;
++    }
++    eyebrow("ABOUT");
++    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text));
++    ImGui::PushTextWrapPos();
++    const char* t = m->about_text ? m->about_text : "";
++    while (*t) {   /* blank lines split paragraphs */
++        const char* end = strstr(t, "\n\n");
++        std::string para(t, end ? (size_t)(end - t) : strlen(t));
++        ImGui::TextWrapped("%s", para.c_str());
++        ImGui::Dummy(ImVec2(0, px(6.0f)));
++        if (!end) break;
++        t = end + 2;
++    }
++    ImGui::PopTextWrapPos();
++    ImGui::PopStyleColor();
++    if (g_about_image.id) image_fit(g_about_image, px(240.0f), px(84.0f));
++    if (m->about_link_url && m->about_link_url[0]) {
++        ImGui::Dummy(ImVec2(0, px(6.0f)));
++        const char* label = m->about_link_label && m->about_link_label[0] ? m->about_link_label : "Open link";
++        if (ImGui::Button(label, ImVec2(px(220.0f), px(38.0f)))) {
++#if defined(LNG_SDL3)
++            SDL_OpenURL(m->about_link_url);
++#else
++            (void)SDL_OpenURL(m->about_link_url);
++#endif
++        }
++    }
++    end_panel();
++}
++
+ /* Draw a bind row's LABEL and leave the cursor at `label_col_w` from the start
+  * of this table cell, ready for the bind chip.
+  *
+@@ -14058,12 +14152,20 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+         const float right = ImGui::GetWindowContentRegionMax().x;
+         const float y = hdr_top + px(6.0f);
+         if (m->view == LNG_VIEW_DASHBOARD) {
++            const bool game_page = m->game_item_count > 0;
++            const bool about_page = m->about_text && m->about_text[0];
+             const int count = 1 + (m->mods ? 1 : 0) +
+                               (m->has_assist_tools ? 1 : 0) +
+-                              ((m->credits_text && m->credits_text[0]) ? 1 : 0);
++                              ((m->credits_text && m->credits_text[0]) ? 1 : 0) +
++                              (game_page ? 1 : 0) + (about_page ? 1 : 0);
+             const float w = px(110.0f);
+             const float total = w * count + gap * (count - 1);
+             ImGui::SetCursorPos(ImVec2(right - total, y));
++            if (game_page) {
++                if (ImGui::Button(ui_text("Game"), ImVec2(w, px(34))))
++                    launcher_model_set_view(m, LNG_VIEW_GAME);
++                ImGui::SameLine(0, gap);
++            }
+             if (ImGui::Button(ui_text("Settings"), ImVec2(w, px(34))))
+                 launcher_model_set_view(m, LNG_VIEW_SETTINGS);
+             if (m->mods) {
+@@ -14081,6 +14183,11 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+                 if (ImGui::Button(ui_text("Credits"), ImVec2(w, px(34))))
+                     launcher_model_set_view(m, LNG_VIEW_CREDITS);
+             }
++            if (about_page) {
++                ImGui::SameLine(0, gap);
++                if (ImGui::Button(ui_text("About"), ImVec2(w, px(34))))
++                    launcher_model_set_view(m, LNG_VIEW_ABOUT);
++            }
+         } else {
+             const float w = px(110.0f);
+             const float name_w = px(170.0f);
+@@ -14157,6 +14264,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+         case LNG_VIEW_MODS:       draw_mods(m, th);                 break;
+         case LNG_VIEW_ASSIST_TOOLS: draw_assist_tools(m, th);        break;
+         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
++        case LNG_VIEW_GAME:         draw_game_page(m, th);           break;
++        case LNG_VIEW_ABOUT:        draw_about(m, th);               break;
+         case LNG_VIEW_LOBBY:        draw_lobby(m, th);               break;
+     }
+     end_container();
+@@ -14668,6 +14777,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
+         // Optional platform wordmark: loads only if the profile names one AND
+         // the file is present (recomp-ui ships none — a console wordmark may be
+         // a third-party trademark). Missing file => header falls back to text.
++        if (m->about_image && m->about_image[0])
++            g_about_image = launcher_texture_load(
++                asset((std::string("assets/img/") + m->about_image).c_str()).c_str());
+         if (bprof && bprof->wordmark_image && bprof->wordmark_image[0])
+             g_wordmark = launcher_texture_load(
+                 asset((std::string("assets/img/") + bprof->wordmark_image).c_str()).c_str());
+diff --git a/src/common/launcher_debug.c b/src/common/launcher_debug.c
+index 458c2cb..8eddb5d 100644
+--- a/src/common/launcher_debug.c
++++ b/src/common/launcher_debug.c
+@@ -184,6 +184,8 @@ static bool launcher_debug_step_impl(LauncherPlatform* p, LauncherModel* m) {
+         else if (strcmp(v, "controller") == 0) launcher_model_set_view(m, LNG_VIEW_CONTROLLER);
+         else if (strcmp(v, "assist_tools") == 0) launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
+         else if (strcmp(v, "credits") == 0) launcher_model_set_view(m, LNG_VIEW_CREDITS);
++        else if (strcmp(v, "game") == 0) launcher_model_set_view(m, LNG_VIEW_GAME);
++        else if (strcmp(v, "about") == 0) launcher_model_set_view(m, LNG_VIEW_ABOUT);
+         /* The LAN-vs-online fork. Reachable only by clicking NETPLAY on the
+          * dashboard, which made it the one netplay page a screenshot script
+          * could not open. */
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index acb6db0..9f2e8cc 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -535,6 +535,13 @@ void launcher_model_init(LauncherModel* m,
+             game->assist_direct_pad_bind_action <= m->assist_binding_count
+                 ? game->assist_direct_pad_bind_action - 1 : -1;
+         m->credits_text         = game->credits_text;
++        m->game_items           = game->game_items;
++        m->game_item_count      = game->game_callbacks ? game->game_item_count : 0;
++        m->game_callbacks       = game->game_callbacks;
++        m->about_text           = game->about_text;
++        m->about_image          = game->about_image;
++        m->about_link_url       = game->about_link_url;
++        m->about_link_label     = game->about_link_label;
+         m->assist_fast_forward_min = game->assist_fast_forward_min > 0
+             ? game->assist_fast_forward_min : 2;
+         m->assist_fast_forward_max = game->assist_fast_forward_max >=
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 1e7fc30..4637a3d 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -59,6 +59,8 @@ typedef enum {
+      * skipped entirely when this client is already signed in or when the
+      * server offers no logins -- see draw_netplay_mode_page. */
+     LNG_VIEW_NETPLAY_SIGNIN,
++    LNG_VIEW_GAME,      /* the title's own option rows (GameInfo.game_items) */
++    LNG_VIEW_ABOUT,     /* GameInfo.about_text */
+     /* Keep last. launcher_model_set_view validates against this rather than
+      * against the last real view, which is what silently swallowed the two
+      * views above when they were first added. */
+@@ -406,6 +408,13 @@ typedef struct {
+     int assist_binding_count;
+     int assist_direct_pad_bind_action;
+     const char* credits_text;
++    const struct RecompRuntimeUiItem*      game_items;
++    size_t                                 game_item_count;
++    const struct RecompRuntimeUiCallbacks* game_callbacks;
++    const char* about_text;
++    const char* about_image;
++    const char* about_link_url;
++    const char* about_link_label;
+     int assist_fast_forward_min;
+     int assist_fast_forward_max;
+     /* Resolved defaults for the assist bindings, seeded from
+diff --git a/src/common/recomp_runtime_settings.c b/src/common/recomp_runtime_settings.c
+index 5358de4..0e8d926 100644
+--- a/src/common/recomp_runtime_settings.c
++++ b/src/common/recomp_runtime_settings.c
+@@ -127,7 +127,7 @@ RecompRuntimeUi *recomp_runtime_ui_create_standard(
+                  RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+     if (has(f, RECOMP_RUNTIME_UI_STANDARD_LINEAR_FILTER))
+         add_item(items, &count, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER, "Graphics",
+-                 "Linear filter", "Smooth the final game image.",
++                 "Smooth pixels (blurry)", "Off: sharp, crisp pixels. On: a softened, blurred picture.",
+                  RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+     if (has(f, RECOMP_RUNTIME_UI_STANDARD_TEXTURE_FILTER))
+         add_item(items, &count, RECOMP_RUNTIME_UI_KEY_TEXTURE_FILTER, "Graphics",
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index d1021a7..cf9e34f 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -2362,7 +2362,24 @@ typedef struct RecompLauncherCGameInfo {
+     const char*        quality_reason;
+     void (*quality_apply)(int preset, RecompLauncherCSettings* s);
+     int  (*quality_redetect)(void);
++
++    /* ---- Game page and About page (appended for ABI stability) -----------
++     * game_items: the title's own option rows (BOOL, CHOICE and ACTION, as in
++     * recomp_runtime_ui.h), drawn on a "Game" page before boot and edited
++     * through game_callbacks. NULL/0 => no page.
++     * about_text: an "About" page body (UTF-8; blank lines split paragraphs);
++     * about_image: a file under assets/img drawn after the text (a
++     * signature); about_link_url/about_link_label: a button that opens the
++     * URL in the browser. about_text NULL => no page. */
++    const struct RecompRuntimeUiItem*      game_items;
++    size_t                                 game_item_count;
++    const struct RecompRuntimeUiCallbacks* game_callbacks;
++    const char* about_text;
++    const char* about_image;
++    const char* about_link_url;
++    const char* about_link_label;
+ } RecompLauncherCGameInfo;
++#define RECOMP_LAUNCHER_HAS_GAME_AND_ABOUT_PAGES 1
+ #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
+ #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
+ /* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
