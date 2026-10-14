@@ -15,4 +15,5 @@ nesrecomp_add_cycle_game(TopGun2
     ROM "${CMAKE_SOURCE_DIR}/rom/topgun2.nes"
     GAME_CONFIG "${CMAKE_SOURCE_DIR}/game.toml"
     PLAYERS 1
+    HOST_EXTRAS "${CMAKE_SOURCE_DIR}/topgun2_extras.c"
     ${_headless})

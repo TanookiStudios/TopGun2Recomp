@@ -1,0 +1,64 @@
+diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
+index b94b037..8400d19 100644
+--- a/runner/cyc/cyc_settings.c
++++ b/runner/cyc/cyc_settings.c
+@@ -6,6 +6,11 @@
+ #include <ctype.h>
+ #include <stdlib.h>
+ #include <string.h>
++#ifdef __APPLE__
++#include <mach-o/dyld.h>
++#include <limits.h>
++#include <stdlib.h>
++#endif
+ #ifdef _WIN32
+ #include <windows.h>
+ #else
+@@ -36,6 +41,12 @@ const char *cyc_settings_default_path(void)
+ #ifdef _WIN32
+     DWORD n = GetModuleFileNameA(NULL, dir, sizeof(dir));
+     if (n == 0 || n >= sizeof(dir)) strcpy(dir, ".");
++#elif defined(__APPLE__)
++    /* macOS has no /proc: without this the config lands in whatever folder
++     * the program was started from instead of beside it. */
++    uint32_t sz = sizeof(dir);
++    char raw[900];
++    if (_NSGetExecutablePath(raw, &sz) != 0 || !realpath(raw, dir)) strcpy(dir, ".");
+ #else
+     ssize_t n = readlink("/proc/self/exe", dir, sizeof(dir) - 1);
+     if (n > 0) dir[n] = 0; else strcpy(dir, ".");
+diff --git a/runner/cyc/hw_apu.c b/runner/cyc/hw_apu.c
+index 806a164..957199c 100644
+--- a/runner/cyc/hw_apu.c
++++ b/runner/cyc/hw_apu.c
+@@ -168,6 +168,10 @@ void apu_set_console(int console)
+  * the 2C33's sound before the adapter mixes it with the 2A03's (hw_fds_audio.c,
+  * the hardware profile).
+  */
++/* Bit i silences channel i (pulse 1, pulse 2, triangle, noise, DMC) in the
++ * mix only; the channels keep running, so game timing is unchanged. */
++uint8_t hw_apu_mute_mask;
++
+ static void audio_stage_setup(int sample_rate)
+ {
+     double dt = 1.0 / sample_rate;
+@@ -367,6 +371,7 @@ static void audio_cycle(void)
+ 
+     uint8_t out[5];
+     apu_channel_levels(out);
++    for (int i = 0; i < 5; i++) if (hw_apu_mute_mask & (1u << i)) out[i] = 0;
+     double level = audio.pulse_mix[out[0] + out[1]] + audio.tnd_mix[3 * out[2] + 2 * out[3] + out[4]];
+ 
+     level += hw_cart_audio_level();
+diff --git a/runner/cyc/hw_internal.h b/runner/cyc/hw_internal.h
+index d859b3c..271f916 100644
+--- a/runner/cyc/hw_internal.h
++++ b/runner/cyc/hw_internal.h
+@@ -468,6 +468,7 @@ void    apu_debug_emit(double level);
+  * (0-15) and DMC (0-127), and the APU's IRQ output. For co-simulation; the
+  * tone generators only run while audio is enabled. */
+ void    apu_channel_levels(uint8_t out[5]);
++extern uint8_t hw_apu_mute_mask;   /* hw_apu.c: bit i silences channel i in the mix */
+ bool    apu_irq_output(void);
+ uint16_t apu_noise_lfsr(void);
+ /* The DMC timer's free-running phase is not defined at power-on; lets a
