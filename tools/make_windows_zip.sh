@@ -14,4 +14,6 @@ mkdir -p "$OUT"
 cp build-win/TopGun2.exe build-win/SDL2.dll "$OUT/"
 cp -R build-win/assets "$OUT/assets"
 ( cd dist && zip -qr TopGun2-Windows.zip TopGun2-Windows )
-echo "dist/TopGun2-Windows.zip"
+# Finished games always go to Downloads (Maddie, 14 Oct 2026).
+cp -f dist/TopGun2-Windows.zip "$HOME/Downloads/"
+echo "$HOME/Downloads/TopGun2-Windows.zip"

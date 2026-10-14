@@ -28,4 +28,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$APP" 2>/dev/null
-echo "$APP"
+# Finished games always go to Downloads (Maddie, 14 Oct 2026).
+rm -rf "$HOME/Downloads/Top Gun 2.app"
+cp -R "$APP" "$HOME/Downloads/"
+echo "$HOME/Downloads/Top Gun 2.app"
