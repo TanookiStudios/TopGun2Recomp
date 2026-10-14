@@ -1,0 +1,105 @@
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index a10d0fc..57c4e58 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -348,6 +348,30 @@ static bool load_state_slot(void)
+ 
+ static int logical_h(void) { return s_tex_h + (s_bar ? BAR_ROWS : 0); }
+ 
++/* What Fit (cyc_video.h) follows. Fullscreen: the drawable. A window: the
++ * monitor it is on - the window takes its shape from the picture, so following
++ * the window would lock Fit at whatever width it started with. */
++static void report_fit_size(void)
++{
++    int ow = 0, oh = 0;
++    SDL_DisplayMode dm;
++    bool fs = (SDL_GetWindowFlags(s_win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
++    if (!fs && SDL_GetDesktopDisplayMode(SDL_GetWindowDisplayIndex(s_win), &dm) == 0) ow = dm.w, oh = dm.h;
++    else SDL_GetRendererOutputSize(s_ren, &ow, &oh);
++    cyc_video_window_resized(ow, oh);
++}
++
++/* The largest window scale <= the setting that fits the monitor's usable
++ * area: a wide picture at the saved scale can be wider than the screen. */
++static int fitting_window_scale(void)
++{
++    int scale = s_set.window_scale < 1 ? 1 : s_set.window_scale;
++    SDL_Rect r;
++    if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(s_win), &r) != 0) return scale;
++    while (scale > 1 && (s_tex_w * scale > r.w || logical_h() * scale > r.h)) scale--;
++    return scale;
++}
++
+ static void apply_picture_scale(void)
+ {
+     int ow = 0, oh = 0;
+@@ -368,7 +392,10 @@ static void apply_settings(void)
+     Uint32 fs = s_set.fullscreen == 1 ? SDL_WINDOW_FULLSCREEN_DESKTOP : s_set.fullscreen == 2 ? SDL_WINDOW_FULLSCREEN : 0;
+     if ((SDL_GetWindowFlags(s_win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != fs)
+         SDL_SetWindowFullscreen(s_win, fs);
+-    if (!fs) SDL_SetWindowSize(s_win, s_tex_w * s_set.window_scale, logical_h() * s_set.window_scale);
++    if (!fs) {
++        int scale = fitting_window_scale();
++        SDL_SetWindowSize(s_win, s_tex_w * scale, logical_h() * scale);
++    }
+     SDL_RenderSetLogicalSize(s_ren, s_tex_w, logical_h());
+     apply_picture_scale();
+     if (s_tex) SDL_SetTextureScaleMode(s_tex, s_set.linear_filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+@@ -377,12 +404,19 @@ static void apply_settings(void)
+ static bool ensure_texture(int w, int h)
+ {
+     if (s_tex && w == s_tex_w && h == s_tex_h) return true;
++    bool reshape = s_tex && (w != s_tex_w || h != s_tex_h);
+     if (s_tex) SDL_DestroyTexture(s_tex);
+     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+     s_tex_w = w;
+     s_tex_h = h;
+     if (s_tex) SDL_SetTextureScaleMode(s_tex, s_set.linear_filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+     SDL_RenderSetLogicalSize(s_ren, s_tex_w, logical_h());
++    /* A new picture width (widescreen on/off, Fit) reshapes a window to match;
++     * otherwise a wide picture is squeezed into the old window's shape. */
++    if (reshape && !(SDL_GetWindowFlags(s_win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
++        int scale = fitting_window_scale();
++        SDL_SetWindowSize(s_win, s_tex_w * scale, logical_h() * scale);
++    }
+     apply_picture_scale();
+     return s_tex != NULL;
+ }
+@@ -1249,11 +1283,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+     /* From here a width request waits for the frame boundary; Fit follows
+      * the drawable from the first frame. */
+     cyc_video_window_ready();
+-    {
+-        int ow = 0, oh = 0;
+-        SDL_GetRendererOutputSize(s_ren, &ow, &oh);
+-        cyc_video_window_resized(ow, oh);
+-    }
++    report_fit_size();
+ #ifdef CYC_WITH_RECOMP_UI
+     CycUiHost host = { &s_set, s_extras, s_fds, apply_settings, save_settings, request_quit, frames_done, now_ms, title,
+                        save_state_slot, load_state_slot, cyc_session_mods_provider(), s_image, cyc_session_mods_reapply };
+@@ -1321,10 +1351,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+             }
+             if (ev.type == SDL_QUIT) s_running = false;
+             else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+-                int ow = 0, oh = 0;
+-                SDL_GetRendererOutputSize(s_ren, &ow, &oh);
+                 apply_picture_scale();
+-                cyc_video_window_resized(ow, oh);
++                report_fit_size();
+             }
+             else if (ev.type == SDL_CONTROLLERDEVICEADDED || ev.type == SDL_CONTROLLERDEVICEREMOVED) open_pads();
+             else if (ev.type == SDL_KEYDOWN) {
+diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
+index f52abd0..b7539f9 100644
+--- a/runner/cyc/cyc_ui_menu.c
++++ b/runner/cyc/cyc_ui_menu.c
+@@ -496,7 +496,7 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+         add("cyc.zapper.crosshair", "Zapper", "Crosshair", "Show the aiming marker.",
+             RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+     }
+-    add("cyc.quit", "System", "Quit", "Close the game (the disk save is written first).", RECOMP_RUNTIME_UI_ACTION,
++    add("cyc.quit", "System", "Close game", "Closes the game window. Press twice to confirm.", RECOMP_RUNTIME_UI_ACTION,
+         0, 0, 0, NULL, 0, NULL);
+     refresh();
+ 

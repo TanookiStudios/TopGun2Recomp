@@ -1,0 +1,18 @@
+diff --git a/runner/cyc/cpu6502.c b/runner/cyc/cpu6502.c
+index 2acbd7a..7d23e27 100644
+--- a/runner/cyc/cpu6502.c
++++ b/runner/cyc/cpu6502.c
+@@ -65,8 +65,11 @@ void cpu_interrupt(bool brk) {
+         cpu_write((uint16_t)(0x100 | cpu.s), cpu_get_p(brk), CYC_POLL);
+         cpu.s--;
+     }
+-    uint16_t vector = cpu.do_nmi ? 0xFFFA : cpu.do_reset ? 0xFFFC : 0xFFFE;
+-    if (cpu.do_nmi) cpu.nmi_edge = 0; /* taking the vector acknowledges the edge */
++    /* Reset outranks NMI: with both pending, the reset vector is taken and the
++     * NMI edge stays latched (a host Reset requested while the frame's NMI is
++     * pending was otherwise dropped). */
++    uint16_t vector = cpu.do_reset ? 0xFFFC : cpu.do_nmi ? 0xFFFA : 0xFFFE;
++    if (cpu.do_nmi && !cpu.do_reset) cpu.nmi_edge = 0; /* taking the vector acknowledges the edge */
+     uint8_t lo = cpu_read(vector, 0);
+     uint8_t hi = cpu_read((uint16_t)(vector + 1), CYC_DONE);
+     cpu.pc = (uint16_t)(lo | hi << 8);

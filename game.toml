@@ -2,4 +2,5 @@
 # MMC3 (mapper 4), 128 KB PRG, 128 KB CHR. No ROM bytes live in this repo.
 [game]
 output_prefix = "topgun2"
+name = "Top Gun: The Second Mission"
 cycle_seed_file = "seeds.txt"

@@ -9,7 +9,9 @@
 #include "hw_internal.h"   /* hw.ram: the 2 KB of CPU work RAM */
 #include "cyc_render.h"
 #include "cyc_video.h"
+#include "cpu6502.h"     /* cpu.do_reset: the console's Reset button */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,9 +113,15 @@ static void save_settings(void *ctx, FILE *f)
 
 /* ---- per frame ---- */
 
+static bool s_reset_pending;
+static long s_reset_at = -1, s_frames_begun;
+
 static void frame_begin(void *ctx)
 {
     (void)ctx;
+    /* Reset is pressed here, just before the CPU runs: requested at frame end,
+     * the host's post-frame work clears pending interrupts before it is taken. */
+    if (s_reset_pending || ++s_frames_begun == s_reset_at) { s_reset_pending = false; cpu.do_reset = 1; }
     hw_apu_mute_mask = s.mute | s_cli.mute;
 }
 
@@ -157,10 +165,15 @@ static void do_skip(void)
     hw.ram[0x050] = 1;   /* mission intro: briefing, then launch */
 }
 
+static long s_lines_at = -1;   /* --dump-lines: print each row's scroll at frame N */
+
 static void frame_end(void *ctx)
 {
     (void)ctx;
     s_frame++;
+    if (s_frame == s_lines_at)
+        for (int y = 0; y < 240; y++)
+            printf("line %3d scroll x=%3d y=%3d\n", y, cyc_render_line_scroll_x(y), cyc_render_line_scroll_y(y));
     if (s_skip_pending || s_frame == s_skip_at) { s_skip_pending = false; do_skip(); }
     apply_cheats();
     apply_pokes(s_pokes, s_poke_count);
@@ -169,44 +182,90 @@ static void frame_end(void *ctx)
 
 /* ---- widescreen ----
  *
- * The NES draws 256 columns; the host gives us a wider canvas. In flight the
- * view above the cockpit is horizontal sky/sea bands, so each row's wings take
- * that row's most common color from just inside the native picture (a sprite
- * at the edge can't streak across). Cockpit rows - the ones the mid-frame
- * split scrolls into the lower nametables - get a dark bezel. Anything not in
- * flight (title, menus, briefing art) stays pillarboxed. */
+ * The NES draws 256 columns; the host gives us a wider canvas. Only while
+ * flying ($50 == 5): the launch deck, crashes, briefings and menus stay
+ * pillarboxed. Rows the mid-frame split scrolls to the right-hand nametable
+ * (line scroll X >= 256) are the cockpit and get a dark bezel; the sky is
+ * always drawn from the left one, level or banked (its Y scroll does pass 240
+ * when the nose is down, so Y can't tell them apart).
+ *
+ * The view above the cockpit is sky/sea bands that tilt when the plane banks.
+ * Each frame the tilt is measured from where the same color boundary sits at
+ * the left and right edges of the native picture, and each wing pixel takes
+ * the color the band it lies on has at the nearest edge. */
 
 #define BEZEL 0xFF101018u
+#define EDGE_L 8      /* first column past the NES left-column mask */
+#define EDGE_R 247
 
-/* A row's most common color across columns 8..247 (past the NES left-column
- * mask). Sky/sea bands span the whole row, so this outvotes any sprite. */
-static uint32_t row_band_color(const uint32_t *row)
+static uint32_t edge_color(const uint32_t *row, int x)
 {
-    uint32_t best = row[8];
-    int best_n = 0;
-    for (int i = 8; i < 248; i += 16) {
+    /* Majority of 4 neighbors toward the inside, so a lone sprite pixel on the
+     * edge column can't paint a stripe across the wing. */
+    int dir = x < 128 ? 1 : -1;
+    uint32_t c[4];
+    for (int i = 0; i < 4; i++) c[i] = row[x + dir * i];
+    for (int i = 0; i < 4; i++) {
         int n = 0;
-        for (int j = 8; j < 248; j += 2) n += row[j] == row[i];
-        if (n > best_n) best_n = n, best = row[i];
+        for (int j = 0; j < 4; j++) n += c[j] == c[i];
+        if (n >= 2) return c[i];
     }
-    return best;
+    return c[0];
+}
+
+/* Slope (rows per column) of the band boundaries, from color transitions
+ * matched down both edges between rows top..bot; 0 when none match. */
+static double band_slope(const uint32_t *l, const uint32_t *r, int top, int bot)
+{
+    double sum = 0;
+    int n = 0;
+    for (int y = top + 1; y <= bot; y++) {
+        if (l[y] == l[y - 1]) continue;
+        int best = -1;   /* the same boundary on the right edge, nearest to y */
+        for (int d = 0; d <= bot - top && best < 0; d++) {
+            int ys[2] = { y - d, y + d };
+            for (int k = 0; k < 2 && best < 0; k++)
+                if (ys[k] > top && ys[k] <= bot && r[ys[k]] == l[y] && r[ys[k] - 1] == l[y - 1]) best = ys[k];
+        }
+        if (best >= 0) { sum += (double)(best - y) / (EDGE_R - EDGE_L); n++; }
+    }
+    return n ? sum / n : 0.0;
 }
 
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user;
-    if (!IN_FLIGHT) return 0;
+    if (!IN_FLIGHT || hw.ram[0x050] != 5 || height > 240) return 0;
+
+    static uint32_t colL[240], colR[240];
+    static bool cockpit[240];
+    int top = -1, bot = -1;
+    for (int y = 0; y < height; y++) {
+        cockpit[y] = cyc_render_line_scroll_x(y) >= 256;   /* --dump-lines: sky x=0, cockpit x=256 */
+        colL[y] = edge_color(native + y * 256, EDGE_L);
+        colR[y] = edge_color(native + y * 256, EDGE_R);
+        if (!cockpit[y]) { if (top < 0) top = y; bot = y; }
+    }
+    if (top < 0) return 0;
+    double slope = band_slope(colL, colR, top, bot);
+
     for (int y = 0; y < height; y++) {
         const uint32_t *src = native + y * 256;
         uint32_t *dst = out + y * width;
-        bool cockpit = cyc_render_line_scroll_y(y) >= 240;
-        uint32_t band = cockpit ? BEZEL : row_band_color(src);
-        for (int x = 0; x < x0; x++) dst[x] = band;
         memcpy(dst + x0, src, 256 * sizeof *src);
-        /* The game hides the leftmost 8 columns (PPUMASK); in the sky that
-         * would be a black stripe between the wing and the picture. */
-        if (!cockpit) for (int x = 0; x < 8; x++) dst[x0 + x] = band;
-        for (int x = x0 + 256; x < width; x++) dst[x] = band;
+        if (cockpit[y]) {
+            for (int x = 0; x < x0; x++) dst[x] = BEZEL;
+            for (int x = x0 + 256; x < width; x++) dst[x] = BEZEL;
+            continue;
+        }
+        for (int x = 0; x < x0 + EDGE_L; x++) {   /* left wing + masked columns 0..7 */
+            int ys = (int)lround(y - slope * (x - (x0 + EDGE_L)));
+            dst[x] = colL[ys < top ? top : ys > bot ? bot : ys];
+        }
+        for (int x = x0 + 256; x < width; x++) {
+            int ys = (int)lround(y - slope * (x - (x0 + EDGE_R)));
+            dst[x] = colR[ys < top ? top : ys > bot ? bot : ys];
+        }
     }
     return 1;
 }
@@ -226,6 +285,8 @@ static const CycHostOption OPTIONS[] = {
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
     { "--cheat", true, "turn on a cheat for this run: lives, missiles, nohit" },
     { "--widescreen", true, "presented width: off, 16:9, 21:9, 32:9, fit" },
+    { "--dump-lines", true, "print every row's background scroll at frame N (testing)" },
+    { "--reset-at", true, "press the console's Reset button at frame N (testing)" },
     { "--skip-at", true, "skip to the next mission at frame N (testing)" },
     { "--start-mission", true, "begin new games on mission 1, 2 or 3 (this run only)" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
@@ -259,6 +320,11 @@ static bool option(void *ctx, const char *name, const char *value)
             if (!strcmp(value, names[i])) { apply_wide(i); return true; }
         return false;
     }
+    if (!strcmp(name, "--dump-lines")) { s_lines_at = strtol(value, NULL, 10); return s_lines_at > 0; }
+    if (!strcmp(name, "--reset-at")) {
+        s_reset_at = strtol(value, NULL, 10);
+        return s_reset_at > 0;
+    }
     if (!strcmp(name, "--skip-at")) {
         s_skip_at = strtol(value, NULL, 10);
         return s_skip_at > 0;
@@ -288,6 +354,8 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.mute.2", "Audio", "Mute triangle", "Bass line.",                    RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.3", "Audio", "Mute noise",    "Drums, guns and explosions.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.4", "Audio", "Mute samples",  "Recorded sound clips (DMC).",   RECOMP_RUNTIME_UI_BOOL },
+    { "tg2.reset", "System", "Reset game", "Like pressing Reset on the console: back to the title screen.",
+      RECOMP_RUNTIME_UI_ACTION },
     { "tg2.wide", "Graphics", "Widescreen",
       "Fills wide and ultrawide screens in flight. Fit my screen matches any monitor, up to 32:9.",
       RECOMP_RUNTIME_UI_CHOICE, 0, WIDE_COUNT - 1, 1, WIDE_NAMES, WIDE_COUNT },
@@ -336,6 +404,10 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 static int run_action(void *ctx, const RecompRuntimeUiItem *item)
 {
     (void)ctx;
+    if (!strcmp(item->key, "tg2.reset")) {
+        s_reset_pending = true;
+        return 1;
+    }
     if (strcmp(item->key, "tg2.skip")) return 0;
     s_skip_pending = true;   /* applied at the end of the next frame */
     return 1;
