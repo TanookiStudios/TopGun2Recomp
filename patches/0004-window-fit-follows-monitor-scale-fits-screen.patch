@@ -1,5 +1,5 @@
 diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
-index a10d0fc..57c4e58 100644
+index a10d0fc..0686f00 100644
 --- a/runner/cyc/cyc_sdl.c
 +++ b/runner/cyc/cyc_sdl.c
 @@ -348,6 +348,30 @@ static bool load_state_slot(void)
@@ -65,7 +65,113 @@ index a10d0fc..57c4e58 100644
      apply_picture_scale();
      return s_tex != NULL;
  }
-@@ -1249,11 +1283,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+@@ -808,6 +842,32 @@ static void tcp_window_size(int id, const char *line)
+     cyc_tcp_ok(id, NULL);
+ }
+ 
++/* Move the window to another monitor (tests mixed Retina / non-Retina setups). */
++static void tcp_window_display(int id, const char *line)
++{
++    long d = 0;
++    if (!cyc_tcp_long(line, "display", &d) || d < 0 || d >= SDL_GetNumVideoDisplays()) {
++        cyc_tcp_err(id, "window_display: display (0-based index of a connected monitor)");
++        return;
++    }
++    SDL_SetWindowPosition(s_win, SDL_WINDOWPOS_CENTERED_DISPLAY((int)d), SDL_WINDOWPOS_CENTERED_DISPLAY((int)d));
++    cyc_tcp_ok(id, NULL);
++}
++
++/* Window size in points and pixels next to the renderer's output size: they
++ * disagree when the drawable failed to follow a resize. */
++static void tcp_window_info(int id, const char *line)
++{
++    (void)line;
++    int ww, wh, pw, ph, ow, oh;
++    SDL_GetWindowSize(s_win, &ww, &wh);
++    SDL_GL_GetDrawableSize(s_win, &pw, &ph);
++    SDL_GetRendererOutputSize(s_ren, &ow, &oh);
++    char f[160];
++    snprintf(f, sizeof f, "\"points\":[%d,%d],\"drawable\":[%d,%d],\"output\":[%d,%d]", ww, wh, pw, ph, ow, oh);
++    cyc_tcp_ok(id, f);
++}
++
+ static void tcp_mod_stats(int id, const char *line)
+ {
+     (void)line;
+@@ -946,6 +1006,8 @@ static void tcp_setup(void)
+     cyc_tcp_register("load_state", "load a save state: path", tcp_load_state);
+     cyc_tcp_register("video", "the presented width: mode stock|16:9|21:9|32:9|fit (optional)", tcp_video);
+     cyc_tcp_register("window_size", "resize the window (Fit follows its drawable): w, h", tcp_window_size);
++    cyc_tcp_register("window_info", "window size in points, drawable and renderer output", tcp_window_info);
++    cyc_tcp_register("window_display", "move the window to monitor N: display", tcp_window_display);
+     cyc_tcp_register("mod_stats", "hook sites, isolated calls, compositor counts", tcp_mod_stats);
+     cyc_tcp_register("quit", "close the window (the disk save is written first)", tcp_quit);
+     if (s_extras && s_extras->tcp_setup) s_extras->tcp_setup(s_extras->ctx);
+@@ -1080,6 +1142,20 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+     int w, h;
+     const uint32_t *pic = picture(&w, &h);
+     if (!ensure_texture(w, h)) return;
++    /* Re-lay the picture out whenever the drawable's size changes, however it
++     * changed (fullscreen on/off, dragging, the zoom button, another monitor):
++     * a layout computed for the old size draws only part of the picture. */
++    {
++        static int last_ow, last_oh;
++        int ow = 0, oh = 0;
++        SDL_GetRendererOutputSize(s_ren, &ow, &oh);
++        if (ow != last_ow || oh != last_oh) {
++            last_ow = ow, last_oh = oh;
++            SDL_RenderSetLogicalSize(s_ren, s_tex_w, logical_h());
++            apply_picture_scale();
++            report_fit_size();
++        }
++    }
+ #ifndef CYC_WITH_RECOMP_UI
+     /* no runtime UI: the toast goes into a copy of the picture */
+     static uint32_t *copy;
+@@ -1100,8 +1176,25 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+     SDL_UpdateTexture(s_tex, NULL, pic, w * 4);
+     SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
+     SDL_RenderClear(s_ren);
+-    SDL_Rect dst = { 0, 0, w, h };
+-    SDL_RenderCopy(s_ren, s_tex, NULL, &dst);
++    {
++        /* Lay the picture out in output pixels ourselves: centered, whole-number
++         * zoom when IntegerScale is on and it fits, else the largest fit. The
++         * logical-size presentation pinned it top-left after a resize on
++         * macOS (sdl2-compat), drawing only part of a wide picture. */
++        int lw = 0, lh = 0, ow = 0, oh = 0;
++        SDL_RenderGetLogicalSize(s_ren, &lw, &lh);
++        SDL_RenderSetLogicalSize(s_ren, 0, 0);
++        SDL_RenderSetViewport(s_ren, NULL);
++        SDL_RenderSetScale(s_ren, 1.0f, 1.0f);
++        SDL_GetRendererOutputSize(s_ren, &ow, &oh);
++        int bw = w, bh = logical_h();
++        double sc = (double)ow / bw < (double)oh / bh ? (double)ow / bw : (double)oh / bh;
++        if (s_set.integer_scale && sc >= 1.0) sc = (double)(int)sc;
++        int dw = (int)(bw * sc), dh = (int)(h * sc);
++        SDL_Rect dst = { (ow - dw) / 2, (oh - (int)(bh * sc)) / 2, dw, dh };
++        SDL_RenderCopy(s_ren, s_tex, NULL, &dst);
++        SDL_RenderSetLogicalSize(s_ren, lw, lh);
++    }
+     CycZapperState gun;
+     cyc_zapper_state(&gun);
+     int aim_x = -1, aim_y = -1;
+@@ -1132,10 +1225,14 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+         /* ReadPixels(NULL) reads only the current picture viewport. Capture
+          * the whole window, including pillarboxes and the full-size menu. */
+         SDL_Rect viewport;
++        int slw = 0, slh = 0;
+         SDL_RenderGetViewport(s_ren, &viewport);
++        SDL_RenderGetLogicalSize(s_ren, &slw, &slh);
++        SDL_RenderSetLogicalSize(s_ren, 0, 0);    /* read output pixels, not the logical presentation */
+         SDL_RenderSetViewport(s_ren, NULL);
+         bool ok = px && SDL_RenderReadPixels(s_ren, NULL, SDL_PIXELFORMAT_ARGB8888, px, ow * 4) == 0 &&
+                   cyc_write_png(s_ui_shot, px, ow, oh);
++        SDL_RenderSetLogicalSize(s_ren, slw, slh);
+         SDL_RenderSetViewport(s_ren, &viewport);
+         free(px);
+         char q[1100], fl[1200];
+@@ -1249,11 +1346,7 @@ int cyc_sdl_main(const char *title_in, int scale)
      /* From here a width request waits for the frame boundary; Fit follows
       * the drawable from the first frame. */
      cyc_video_window_ready();
@@ -78,7 +184,7 @@ index a10d0fc..57c4e58 100644
  #ifdef CYC_WITH_RECOMP_UI
      CycUiHost host = { &s_set, s_extras, s_fds, apply_settings, save_settings, request_quit, frames_done, now_ms, title,
                         save_state_slot, load_state_slot, cyc_session_mods_provider(), s_image, cyc_session_mods_reapply };
-@@ -1321,10 +1351,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+@@ -1321,10 +1414,8 @@ int cyc_sdl_main(const char *title_in, int scale)
              }
              if (ev.type == SDL_QUIT) s_running = false;
              else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {

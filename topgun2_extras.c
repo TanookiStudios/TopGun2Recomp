@@ -237,13 +237,17 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     (void)user;
     if (!IN_FLIGHT || hw.ram[0x050] != 5 || height > 240) return 0;
 
-    static uint32_t colL[240], colR[240];
+    static uint32_t colL[240], colR[240], bg[256 * 240];
     static bool cockpit[240];
+    /* Edge colors from the background alone, so an enemy plane crossing the
+     * edge can't be smeared across the wing; the native picture if the
+     * capture isn't available. */
+    const uint32_t *edges = cyc_render_background(bg) ? bg : native;
     int top = -1, bot = -1;
     for (int y = 0; y < height; y++) {
         cockpit[y] = cyc_render_line_scroll_x(y) >= 256;   /* --dump-lines: sky x=0, cockpit x=256 */
-        colL[y] = edge_color(native + y * 256, EDGE_L);
-        colR[y] = edge_color(native + y * 256, EDGE_R);
+        colL[y] = edge_color(edges + y * 256, EDGE_L);
+        colR[y] = edge_color(edges + y * 256, EDGE_R);
         if (!cockpit[y]) { if (top < 0) top = y; bot = y; }
     }
     if (top < 0) return 0;
@@ -275,6 +279,7 @@ static void apply_wide(int mode)
     if (mode < 0 || mode >= WIDE_COUNT) mode = 0;
     s.wide = (uint8_t)mode;
     cyc_render_set_compositor(compose, NULL);
+    cyc_render_capture_background(mode != 0);   /* sprite-free picture for the wing colors */
     cyc_video_set_mode(NES_VIDEO_STOCK + mode);
 }
 
