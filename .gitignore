@@ -1,0 +1,13 @@
+# NEVER commit the ROM or anything made from it (generated C, screenshots, traces).
+rom/
+*.nes
+*.NES
+work/
+build*/
+vendor/
+saves/
+*.cycstate
+*.state
+*.png
+*.wav
+.DS_Store

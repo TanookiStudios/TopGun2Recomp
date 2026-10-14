@@ -1,0 +1,5 @@
+# Top Gun: The Second Mission (USA) - NESRecomp config.
+# MMC3 (mapper 4), 128 KB PRG, 128 KB CHR. No ROM bytes live in this repo.
+[game]
+output_prefix = "topgun2"
+cycle_seed_file = "seeds.txt"

@@ -1,0 +1,38 @@
+diff --git a/runner/src/input_script.c b/runner/src/input_script.c
+index 9b13df6..88129ed 100644
+--- a/runner/src/input_script.c
++++ b/runner/src/input_script.c
+@@ -175,6 +175,23 @@ int script_load(const char *path) {
+ void script_tick(uint64_t frame, const uint8_t *ram) {
+     if (!s_loaded || s_exit_code >= 0) return;
+ 
++    /* WAIT must be denominated in OBSERVABLE frames, i.e. g_frame_count, because
++     * that is the clock record_tick() uses when it writes a recording. Consuming
++     * one WAIT frame per CALL instead lets playback run ahead of the recording
++     * whenever this is invoked more than once per advancing frame: replaying a
++     * 4105-frame recording of real play finished at g_frame_count 3838 -- about
++     * 7% fast -- which desynchronised the entire session and made recordings
++     * useless as regression tests.
++     *
++     * Two rules keep the two clocks identical:
++     *   - consume a WAIT frame only when `frame` has actually advanced;
++     *   - consume at most one per advancing frame, so consecutive WAITs
++     *     (WAIT 1 / WAIT 1) take two frames instead of collapsing into one call.
++     */
++    static uint64_t s_last_wait_frame = UINT64_MAX;
++    int frame_advanced = (frame != s_last_wait_frame);
++    int consumed = 0;
++
+     /* Process commands until we need to block */
+     while (s_cmd_cursor < s_cmd_count) {
+         Cmd *c = &s_cmds[s_cmd_cursor];
+@@ -184,6 +201,9 @@ void script_tick(uint64_t frame, const uint8_t *ram) {
+                 if (c->iarg == 0) { s_cmd_cursor++; continue; }
+                 s_wait_left = c->iarg;
+             }
++            if (!frame_advanced || consumed) return;
++            s_last_wait_frame = frame;
++            consumed = 1;
+             s_wait_left--;
+             if (s_wait_left > 0) return;
+             s_wait_left = 0;
