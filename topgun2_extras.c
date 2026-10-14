@@ -34,7 +34,14 @@ static const Cheat CHEATS[] = {
     /* One counter per missile type at $68+type ($57 = selected type); the
      * firing code does LDY $57 / LDA $0068,Y / SBC #1 / STA $0068,Y. */
     { "CheatMissiles", "missiles", 0x068, 3 },
+    /* $440 = the player's plane: 0x40 flying, 0xE1 missile closing, 0xCx hit
+ * (0xC8 and 0xC2 seen: the low bits are the kind of hit).
+     * The crash code at $8B81 reads the 0xCx two frames after the hit lands
+     * ($52 = 2 -> $50 = 6 at $F452), so turning it back to 0x40 at the end of
+     * the frame cancels the hit. slots = 0: handled in apply_cheats. */
+    { "CheatNoHit", "nohit", 0x440, 0 },
 };
+enum { CHEAT_NOHIT = 2 };
 enum { CHEAT_COUNT = sizeof CHEATS / sizeof CHEATS[0] };
 
 typedef struct {
@@ -108,6 +115,8 @@ static uint8_t s_cheat_prev[CHEAT_COUNT][4];
 
 static void apply_cheats(void)
 {
+    if (((s.cheats | s_cli.cheats) >> CHEAT_NOHIT & 1) && IN_FLIGHT && (hw.ram[0x440] & 0xF0) == 0xC0)
+        hw.ram[0x440] = 0x40;
     for (int i = 0; i < CHEAT_COUNT; i++)
         for (int k = 0; k < CHEATS[i].slots; k++) {
             uint8_t *v = &hw.ram[CHEATS[i].addr + k], *prev = &s_cheat_prev[i][k];
@@ -182,7 +191,7 @@ static void apply_wide(int mode)
 static const CycHostOption OPTIONS[] = {
     { "--ram-trace", true, "append the 2 KB of CPU RAM to FILE after every frame (RAM mapping)" },
     { "--poke", true, "hold RAM bytes every frame: ADDR=VAL[,ADDR=VAL...] in hex, e.g. 12A=05" },
-    { "--cheat", true, "turn on a cheat for this run: lives, missiles" },
+    { "--cheat", true, "turn on a cheat for this run: lives, missiles, nohit" },
     { "--widescreen", true, "presented width: off, 16:9, 21:9, 32:9, fit" },
     { "--mute", true, "silence APU channels: bitmask, 1=pulse1 2=pulse2 4=triangle 8=noise 16=DMC" },
 };
@@ -239,6 +248,7 @@ static const RecompRuntimeUiItem MENU[] = {
       RECOMP_RUNTIME_UI_CHOICE, 0, WIDE_COUNT - 1, 1, WIDE_NAMES, WIDE_COUNT },
     { "tg2.cheat.0", "Cheats", "Infinite lives",    "Losing a plane doesn't cost a life.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.1", "Cheats", "Infinite missiles", "Firing doesn't use up missiles.",       RECOMP_RUNTIME_UI_BOOL },
+    { "tg2.cheat.2", "Cheats", "Can't be hit", "Enemy missiles never hit your plane.",           RECOMP_RUNTIME_UI_BOOL },
 };
 
 /* "tg2.mute.N" -> &s.mute bit N, "tg2.cheat.N" -> &s.cheats bit N. */
