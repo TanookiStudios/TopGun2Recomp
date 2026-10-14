@@ -43,6 +43,8 @@ typedef struct {
 } Settings;
 
 static Settings s;
+/* Command-line --cheat / --mute: this run only, never written to config.ini. */
+static Settings s_cli;
 static FILE *s_ram_trace;   /* --ram-trace: 2 KB of RAM appended per frame */
 
 /* --poke: RAM writes held every frame. Cheats and RAM mapping both use this. */
@@ -86,7 +88,7 @@ static void save_settings(void *ctx, FILE *f)
 static void frame_begin(void *ctx)
 {
     (void)ctx;
-    hw_apu_mute_mask = s.mute;
+    hw_apu_mute_mask = s.mute | s_cli.mute;
 }
 
 static uint8_t s_cheat_prev[CHEAT_COUNT][4];
@@ -99,7 +101,7 @@ static void apply_cheats(void)
     for (int i = 0; i < CHEAT_COUNT; i++)
         for (int k = 0; k < CHEATS[i].slots; k++) {
             uint8_t *v = &hw.ram[CHEATS[i].addr + k], *prev = &s_cheat_prev[i][k];
-            if ((s.cheats >> i & 1) && IN_FLIGHT && *prev != 0 && *v == (uint8_t)(*prev - 1))
+            if (((s.cheats | s_cli.cheats) >> i & 1) && IN_FLIGHT && *prev != 0 && *v == (uint8_t)(*prev - 1))
                 *v = *prev;
             *prev = *v;
         }
@@ -203,7 +205,7 @@ static bool option(void *ctx, const char *name, const char *value)
     }
     if (!strcmp(name, "--cheat")) {
         for (int i = 0; i < CHEAT_COUNT; i++)
-            if (!strcmp(value, CHEATS[i].option)) { s.cheats |= (uint8_t)(1u << i); return true; }
+            if (!strcmp(value, CHEATS[i].option)) { s_cli.cheats |= (uint8_t)(1u << i); return true; }
         return false;
     }
     if (!strcmp(name, "--widescreen")) {
@@ -220,7 +222,7 @@ static bool option(void *ctx, const char *name, const char *value)
         char *end;
         long v = strtol(value, &end, 0);
         if (*end || v < 0 || v > 31) return false;
-        s.mute = (uint8_t)v;
+        s_cli.mute = (uint8_t)v;
         return true;
     }
     return false;

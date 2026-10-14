@@ -6,6 +6,11 @@ include("${NESRECOMP_ROOT}/runner/cyc/project.cmake")
 
 option(TOPGUN2_HEADLESS "Build without a window (automated checks only)" OFF)
 set(_headless "")
+# Cross builds (cmake/mingw-w64.cmake) run the Mac-built translator.
+set(TOPGUN2_RECOMPILER "" CACHE FILEPATH "Host NESRecomp for cross builds")
+if(TOPGUN2_RECOMPILER)
+    list(APPEND _headless RECOMPILER "${TOPGUN2_RECOMPILER}")
+endif()
 if(TOPGUN2_HEADLESS)
     set(_headless HEADLESS)
 endif()
@@ -17,3 +22,8 @@ nesrecomp_add_cycle_game(TopGun2
     PLAYERS 1
     HOST_EXTRAS "${CMAKE_SOURCE_DIR}/topgun2_extras.c"
     ${_headless})
+
+# Windows: a GUI program, so no console window opens behind the game.
+if(WIN32 AND TARGET TopGun2)
+    set_target_properties(TopGun2 PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()

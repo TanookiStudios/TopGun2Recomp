@@ -11,3 +11,4 @@ saves/
 *.png
 *.wav
 .DS_Store
+dist/
