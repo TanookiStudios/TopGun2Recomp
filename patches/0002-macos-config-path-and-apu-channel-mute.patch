@@ -1,5 +1,5 @@
 diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
-index b94b037..8400d19 100644
+index b94b037..a403b09 100644
 --- a/runner/cyc/cyc_settings.c
 +++ b/runner/cyc/cyc_settings.c
 @@ -6,6 +6,11 @@
@@ -14,16 +14,80 @@ index b94b037..8400d19 100644
  #ifdef _WIN32
  #include <windows.h>
  #else
-@@ -36,6 +41,12 @@ const char *cyc_settings_default_path(void)
+@@ -29,6 +34,49 @@ void cyc_settings_default(CycSettings *s)
+     cyc_bindings_default(&s->bind);
+ }
+ 
++#ifdef __APPLE__
++#include <sys/stat.h>
++#include <stdio.h>
++
++/* mkdir -p for the directory part of `file` (everything before the last /). */
++static void mkdir_settings_dir(const char *file)
++{
++    char d[900];
++    snprintf(d, sizeof(d), "%s", file);
++    char *end = strrchr(d, '/');
++    if (!end) return;
++    *end = 0;
++    for (char *p = d + 1; *p; ++p)
++        if (*p == '/') { *p = 0; mkdir(d, 0755); *p = '/'; }
++    mkdir(d, 0755);
++}
++
++/* Copy each settings file from old_dir to the directory of new_file unless it
++ * is already there. Never deletes the originals. */
++static void migrate_settings(const char *old_dir, const char *new_file)
++{
++    static const char *const names[] = { "config.ini", "rom.cfg", "launcher-window.ini", "keybinds.ini" };
++    char nd[900];
++    snprintf(nd, sizeof(nd), "%s", new_file);
++    char *end = strrchr(nd, '/');
++    if (!end) return;
++    *end = 0;
++    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
++        char from[1024], to[1024];
++        snprintf(from, sizeof(from), "%s/%s", old_dir, names[i]);
++        snprintf(to, sizeof(to), "%s/%s", nd, names[i]);
++        struct stat st;
++        if (stat(to, &st) == 0 || stat(from, &st) != 0) continue;
++        FILE *in = fopen(from, "rb"), *out = in ? fopen(to, "wb") : NULL;
++        char buf[8192];
++        size_t n;
++        while (in && out && (n = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, n, out);
++        if (in) fclose(in);
++        if (out) fclose(out);
++    }
++}
++#endif
++
+ const char *cyc_settings_default_path(void)
+ {
+     static char path[1024];
+@@ -36,6 +84,26 @@ const char *cyc_settings_default_path(void)
  #ifdef _WIN32
      DWORD n = GetModuleFileNameA(NULL, dir, sizeof(dir));
      if (n == 0 || n >= sizeof(dir)) strcpy(dir, ".");
 +#elif defined(__APPLE__)
-+    /* macOS has no /proc: without this the config lands in whatever folder
-+     * the program was started from instead of beside it. */
++    /* macOS: ~/Library/Application Support/<program name>/. Beside the
++     * program is read-only for a downloaded app (macOS runs it from a
++     * randomized read-only copy) and writing inside a signed .app breaks its
++     * signature. Files earlier builds kept beside the program are copied over
++     * the first time. */
 +    uint32_t sz = sizeof(dir);
-+    char raw[900];
-+    if (_NSGetExecutablePath(raw, &sz) != 0 || !realpath(raw, dir)) strcpy(dir, ".");
++    char raw[900], exe[900];
++    if (_NSGetExecutablePath(raw, &sz) != 0 || !realpath(raw, exe)) strcpy(exe, "./program");
++    const char *home = getenv("HOME");
++    const char *slash = strrchr(exe, '/');
++    if (home && *home && slash) {
++        char old_dir[900];
++        snprintf(old_dir, sizeof(old_dir), "%.*s", (int)(slash - exe), exe);
++        snprintf(dir, sizeof(dir), "%s/Library/Application Support/%s/x", home, slash + 1);
++        mkdir_settings_dir(dir);
++        migrate_settings(old_dir, dir);
++    } else {
++        snprintf(dir, sizeof(dir), "%s", exe);
++    }
  #else
      ssize_t n = readlink("/proc/self/exe", dir, sizeof(dir) - 1);
      if (n > 0) dir[n] = 0; else strcpy(dir, ".");

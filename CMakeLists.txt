@@ -35,3 +35,9 @@ if(TARGET TopGun2 AND NOT TOPGUN2_HEADLESS)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/signature.png
                 $<TARGET_FILE_DIR:TopGun2>/assets/img/maddie-signature.png)
 endif()
+
+# Program icon: Windows embeds it in the .exe; the Mac app gets it from
+# tools/make_app.sh (Contents/Resources/AppIcon.icns).
+if(WIN32 AND TARGET TopGun2)
+    target_sources(TopGun2 PRIVATE ${CMAKE_SOURCE_DIR}/assets/icon/topgun2.rc)
+endif()
