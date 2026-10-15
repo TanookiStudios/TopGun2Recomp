@@ -1,5 +1,5 @@
 diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
-index a10d0fc..0686f00 100644
+index a10d0fc..d219202 100644
 --- a/runner/cyc/cyc_sdl.c
 +++ b/runner/cyc/cyc_sdl.c
 @@ -348,6 +348,30 @@ static bool load_state_slot(void)
@@ -65,7 +65,96 @@ index a10d0fc..0686f00 100644
      apply_picture_scale();
      return s_tex != NULL;
  }
-@@ -808,6 +842,32 @@ static void tcp_window_size(int id, const char *line)
+@@ -393,11 +427,52 @@ static SDL_GameController *s_pads[CYC_INPUT_MAX_PADS];
+ static char s_pad_guid[CYC_INPUT_MAX_PADS][40];
+ static int  s_pad_count;
+ 
++/* The community controller database (assets/gamecontrollerdb.txt beside the
++ * program) and the player's own mappings (gamecontrollerdb.txt beside the
++ * settings), once, before the first controller is opened. */
++static void load_pad_mappings(void)
++{
++    static bool done;
++    if (done) return;
++    done = true;
++    char path[1100];
++    exe_path(path, sizeof(path), "gamecontrollerdb.txt");          /* the player's file */
++    char assets[1100];
++    const char *base = SDL_GetBasePath();
++    snprintf(assets, sizeof(assets), "%sassets/gamecontrollerdb.txt", base ? base : "");
++    if (base) SDL_free((void *)base);
++    int n = SDL_GameControllerAddMappingsFromFile(assets);
++    int u = SDL_GameControllerAddMappingsFromFile(path);
++    printf("[cyc input] controller mappings: %d from the bundled database, %d of the player's\n",
++           n > 0 ? n : 0, u > 0 ? u : 0);
++}
++
++/* A joystick SDL has no mapping for (a generic USB pad) still gets one:
++ * buttons in the common order, the first hat and the first two axes as the
++ * D-pad. Every button stays rebindable in the launcher. */
++static void map_unknown_joystick(int index)
++{
++    char guid[64], mapping[512];
++    SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(index), guid, sizeof(guid));
++    const char *name = SDL_JoystickNameForIndex(index);
++    char clean[96];
++    snprintf(clean, sizeof(clean), "%s", name && *name ? name : "Generic controller");
++    for (char *c = clean; *c; ++c) if (*c == ',') *c = ' ';
++    snprintf(mapping, sizeof(mapping),
++             "%s,%s,a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,"
++             "guide:b8,leftstick:b9,rightstick:b10,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,"
++             "leftx:a0,lefty:a1,", guid, clean);
++    if (SDL_GameControllerAddMapping(mapping) >= 0)
++        printf("[cyc input] no mapping for \"%s\": using the generic layout\n", clean);
++}
++
+ static void open_pads(void)
+ {
++    load_pad_mappings();
+     for (int i = 0; i < s_pad_count; ++i) SDL_GameControllerClose(s_pads[i]);
+     s_pad_count = 0;
+     for (int i = 0; i < SDL_NumJoysticks() && s_pad_count < CYC_INPUT_MAX_PADS; ++i) {
++        if (!SDL_IsGameController(i)) map_unknown_joystick(i);
+         if (!SDL_IsGameController(i)) continue;
+         SDL_GameController *c = SDL_GameControllerOpen(i);
+         if (!c) continue;
+@@ -479,6 +554,18 @@ static bool vpad_attach(void)
+     desc.naxes = SDL_CONTROLLER_AXIS_MAX;
+     desc.nbuttons = SDL_CONTROLLER_BUTTON_MAX;
+     desc.name = "NESRecomp virtual controller";
++    /* NESRECOMP_VPAD_GENERIC=1: pose as an unknown USB pad (no mapping), to
++     * test the generic layout. Button N is raw button N. */
++    const char *generic = getenv("NESRECOMP_VPAD_GENERIC");
++    if (generic && *generic == '1') {
++        desc.type = SDL_JOYSTICK_TYPE_UNKNOWN;
++        desc.naxes = 2;
++        desc.nhats = 1;
++        desc.nbuttons = 12;
++        desc.vendor_id = 0x1234;
++        desc.product_id = 0x5678;
++        desc.name = "Generic USB Gamepad (test)";
++    }
+     int index = SDL_JoystickAttachVirtualEx(&desc);
+     if (index < 0 || !(s_vpad_joy = SDL_JoystickOpen(index))) {
+         fprintf(stderr, "virtual controller: %s\n", SDL_GetError());
+@@ -601,6 +688,8 @@ static void tcp_action(int id, const char *line)
+     cyc_tcp_err(id, "action: a shortcut (disk, menu, fast_forward, screenshot, fullscreen) or a button (a ... right)");
+ }
+ 
++static uint8_t s_last_nes[2];   /* this frame's NES buttons for players 1 and 2 */
++
+ static void tcp_state(int id, const char *line)
+ {
+     (void)line;
+@@ -634,6 +723,7 @@ static void tcp_state(int id, const char *line)
+              cyc_run_native ? "true" : "false");
+     /* the controllers the window reads, and the buttons it sees held */
+     size_t at = strlen(f);
++    at += (size_t)snprintf(f + at, sizeof(f) - at, ",\"nes\":[%u,%u]", s_last_nes[0], s_last_nes[1]);
+     at += (size_t)snprintf(f + at, sizeof(f) - at, ",\"pads\":[");
+     for (int i = 0; i < s_pad_count && at < sizeof(f) - 64; ++i) {
+         uint32_t held = 0;
+@@ -808,6 +898,32 @@ static void tcp_window_size(int id, const char *line)
      cyc_tcp_ok(id, NULL);
  }
  
@@ -98,7 +187,7 @@ index a10d0fc..0686f00 100644
  static void tcp_mod_stats(int id, const char *line)
  {
      (void)line;
-@@ -946,6 +1006,8 @@ static void tcp_setup(void)
+@@ -946,6 +1062,8 @@ static void tcp_setup(void)
      cyc_tcp_register("load_state", "load a save state: path", tcp_load_state);
      cyc_tcp_register("video", "the presented width: mode stock|16:9|21:9|32:9|fit (optional)", tcp_video);
      cyc_tcp_register("window_size", "resize the window (Fit follows its drawable): w, h", tcp_window_size);
@@ -107,7 +196,7 @@ index a10d0fc..0686f00 100644
      cyc_tcp_register("mod_stats", "hook sites, isolated calls, compositor counts", tcp_mod_stats);
      cyc_tcp_register("quit", "close the window (the disk save is written first)", tcp_quit);
      if (s_extras && s_extras->tcp_setup) s_extras->tcp_setup(s_extras->ctx);
-@@ -1080,6 +1142,20 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+@@ -1080,6 +1198,20 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
      int w, h;
      const uint32_t *pic = picture(&w, &h);
      if (!ensure_texture(w, h)) return;
@@ -128,7 +217,7 @@ index a10d0fc..0686f00 100644
  #ifndef CYC_WITH_RECOMP_UI
      /* no runtime UI: the toast goes into a copy of the picture */
      static uint32_t *copy;
-@@ -1100,8 +1176,25 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+@@ -1100,8 +1232,25 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
      SDL_UpdateTexture(s_tex, NULL, pic, w * 4);
      SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
      SDL_RenderClear(s_ren);
@@ -156,7 +245,7 @@ index a10d0fc..0686f00 100644
      CycZapperState gun;
      cyc_zapper_state(&gun);
      int aim_x = -1, aim_y = -1;
-@@ -1132,10 +1225,14 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+@@ -1132,10 +1281,14 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
          /* ReadPixels(NULL) reads only the current picture viewport. Capture
           * the whole window, including pillarboxes and the full-size menu. */
          SDL_Rect viewport;
@@ -171,7 +260,7 @@ index a10d0fc..0686f00 100644
          SDL_RenderSetViewport(s_ren, &viewport);
          free(px);
          char q[1100], fl[1200];
-@@ -1249,11 +1346,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+@@ -1249,11 +1402,7 @@ int cyc_sdl_main(const char *title_in, int scale)
      /* From here a width request waits for the frame boundary; Fit follows
       * the drawable from the first frame. */
      cyc_video_window_ready();
@@ -184,7 +273,7 @@ index a10d0fc..0686f00 100644
  #ifdef CYC_WITH_RECOMP_UI
      CycUiHost host = { &s_set, s_extras, s_fds, apply_settings, save_settings, request_quit, frames_done, now_ms, title,
                         save_state_slot, load_state_slot, cyc_session_mods_provider(), s_image, cyc_session_mods_reapply };
-@@ -1321,10 +1414,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+@@ -1321,10 +1470,8 @@ int cyc_sdl_main(const char *title_in, int scale)
              }
              if (ev.type == SDL_QUIT) s_running = false;
              else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -196,6 +285,15 @@ index a10d0fc..0686f00 100644
              }
              else if (ev.type == SDL_CONTROLLERDEVICEADDED || ev.type == SDL_CONTROLLERDEVICEREMOVED) open_pads();
              else if (ev.type == SDL_KEYDOWN) {
+@@ -1349,6 +1496,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+         for (int p = 0; p < CYC_INPUT_PLAYERS; ++p)            /* TCP-held actions */
+             for (int b = 0; b < CYC_INPUT_BUTTONS; ++b)
+                 if (s_act_hold[p][b]) st.buttons[p] |= (uint8_t)(0x80 >> b);
++        s_last_nes[0] = st.buttons[0];   /* TCP `state` "nes": what the bindings gave each player */
++        s_last_nes[1] = st.buttons[1];
+         for (int i = 0; i < CYC_SC_COUNT; ++i)
+             if (s_sc_hold[i]) st.shortcut[i] = true;
+         bool edge[CYC_SC_COUNT];
 diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
 index f52abd0..b7539f9 100644
 --- a/runner/cyc/cyc_ui_menu.c

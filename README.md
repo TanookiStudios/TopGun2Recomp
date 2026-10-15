@@ -48,7 +48,12 @@ No game files come with this download. You need your own copy of the cartridge's
 | Select | \\ |
 | **Menu** | **Esc** |
 
-Xbox, PlayStation and Switch Pro controllers work without setup. Everything can be remapped in **Settings**.
+**Controllers:** plug one in and play, no setup. Xbox, PlayStation (3, 4 and 5), Switch Pro and Joy-Con,
+8BitDo, and over 2,000 other pads are recognized by name. Any other USB pad still works with a standard layout.
+The keyboard keeps working alongside a controller. Everything can be remapped in **Settings**, and the
+**Esc** menu opens from a controller with the right shoulder button (R / RB / R1).
+Own mappings: put a `gamecontrollerdb.txt` in the settings folder
+(Mac: `~/Library/Application Support/TopGun2`, Windows and Linux: next to the program).
 
 ## What's in it
 
@@ -104,7 +109,7 @@ If this made you smile, a tip helps me keep going. No pressure at all.
 
 - Built on [NESRecomp](https://github.com/mstan/nesrecomp) by Matthew Stanley (PolyForm Noncommercial 1.0.0)
   and [recomp-ui](https://github.com/mstan/recomp-ui) (MIT), with [SDL](https://libsdl.org) (zlib) and
-  [Dear ImGui](https://github.com/ocornut/imgui) (MIT). Full texts: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+  [Dear ImGui](https://github.com/ocornut/imgui) (MIT), and the [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) controller list (zlib). Full texts: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - This project's own code is under the [PolyForm Noncommercial License 1.0.0](LICENSE). It may never be sold.
 - Top Gun is a trademark of Paramount Pictures. Top Gun: The Second Mission was published by Konami.
   NES is a trademark of Nintendo. This project is not made by, endorsed by, or affiliated with any of them.

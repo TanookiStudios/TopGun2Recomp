@@ -1,0 +1,59 @@
+diff --git a/runner/cyc/cyc_input.c b/runner/cyc/cyc_input.c
+index 84307a2..31fae4f 100644
+--- a/runner/cyc/cyc_input.c
++++ b/runner/cyc/cyc_input.c
+@@ -222,8 +222,15 @@ void cyc_input_assign(const CycBindings *b, const CycInputFrame *f, int player_p
+     bool taken[CYC_INPUT_MAX_PADS] = { false };
+     int pads = f->pad_count < CYC_INPUT_MAX_PADS ? f->pad_count : CYC_INPUT_MAX_PADS;
+     for (int p = 0; p < CYC_INPUT_PLAYERS; ++p) player_pad[p] = -1;
++#if defined(CYC_GAME_PLAYERS) && CYC_GAME_PLAYERS < CYC_INPUT_PLAYERS
++    /* Seats past the game's own player count are never handed a controller:
++     * in a one-player game the spare player 2 seat would take the only pad. */
++    const int seats = CYC_GAME_PLAYERS;
++#else
++    const int seats = CYC_INPUT_PLAYERS;
++#endif
+     /* players naming a connected controller get it first */
+-    for (int p = 0; p < CYC_INPUT_PLAYERS; ++p) {
++    for (int p = 0; p < seats; ++p) {
+         if (b->source[p] != 2 || !b->device[p][0]) continue;
+         for (int i = 0; i < pads; ++i)
+             if (!taken[i] && f->pad_guid[i] && !strcmp(f->pad_guid[i], b->device[p])) {
+@@ -232,11 +239,18 @@ void cyc_input_assign(const CycBindings *b, const CycInputFrame *f, int player_p
+                 break;
+             }
+     }
+-    for (int p = 0; p < CYC_INPUT_PLAYERS; ++p) {
++    for (int p = 0; p < seats; ++p) {
+         if (b->source[p] != 2 || player_pad[p] >= 0) continue;
+         for (int i = 0; i < pads; ++i)
+             if (!taken[i]) { player_pad[p] = i; taken[i] = true; break; }
+     }
++#if defined(CYC_GAME_PLAYERS) && CYC_GAME_PLAYERS == 1
++    /* A one-player game: a keyboard player 1 also takes the first free
++     * controller, so plugging one in just works with no setting to change. */
++    if (b->source[0] == 1 && player_pad[0] < 0)
++        for (int i = 0; i < pads; ++i)
++            if (!taken[i]) { player_pad[0] = i; taken[i] = true; break; }
++#endif
+ }
+ 
+ void cyc_input_eval(const CycBindings *b, const CycInputFrame *f, CycInputState *out)
+@@ -276,14 +290,15 @@ void cyc_input_eval(const CycBindings *b, const CycInputFrame *f, CycInputState
+             bool on = false;
+             if (b->source[p] == 1) {
+                 on = key_down(f, pb->key) && !key_taken[pb->key];
+-            } else if (b->source[p] == 2 && pad >= 0 && pb->pad) {
++            }
++            if (!on && (b->source[p] == 1 || b->source[p] == 2) && pad >= 0 && pb->pad) {
+                 uint32_t m;
+                 on = pad_down(f, pad, pb->pad, threshold, &m) && !(m & pad_taken[pad]) &&
+                      !(CYC_PAD_IS_AXIS(pb->pad) && axis_taken[pad] == pb->pad);
+             }
+             if (on) bits |= (uint8_t)(0x80 >> i);
+         }
+-        if (b->source[p] == 2 && pad >= 0) {
++        if ((b->source[p] == 1 || b->source[p] == 2) && pad >= 0) {
+             /* the left stick also works the D-pad */
+             if (axis_on(f, pad, SDL_CONTROLLER_AXIS_LEFTY, false, threshold)) bits |= 0x08;
+             if (axis_on(f, pad, SDL_CONTROLLER_AXIS_LEFTY, true, threshold)) bits |= 0x04;
