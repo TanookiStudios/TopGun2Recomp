@@ -158,16 +158,67 @@ paragraph. Suggest r/nes, r/retrogaming, r/emulation, r/macgaming, r/linux_gamin
 ## 10. SNES games
 
 Same house style, different engine: **snesrecomp** (`github.com/mstan/snesrecomp`, same author and
-community as NESRecomp; existing ports include Super Mario World, Super Metroid, A Link to the Past,
-Star Fox, Mega Man X 1-3). The launcher and menus come from the same recomp-ui, so the Game and About
-pages (recomp-ui-0001) should carry over; check the pinned recomp-ui version first.
+community as NESRecomp; ports so far: Super Mario World, Super Metroid, A Link to the Past, Star Fox,
+Mega Man X 1-3, and ours: Super Punch-Out!!). The reference SNES port is `TanookiStudios/SuperPunchOutRecomp`
+(local `~/Documents/GitHub/SuperPunchOutRecomp`); copy from it the way NES ports copy from Top Gun 2.
 
-Not carried over automatically: everything in the NES patches (0001-0007) lives in NESRecomp's runner.
-For an SNES port, check snesrecomp for each player-facing fix in the patch table (Mac settings folder,
-per-channel mute, crisp fit, Reset, one-player keyboard + controller, controller database, Close game)
-and port the missing ones to snesrecomp as `patches/` the same way. Look at an existing snesrecomp
-game repo (e.g. SuperMarioWorldRecomp) for its CMake/config shape before copying ours.
+**Step 0, can snesrecomp do this game?** `python3 tools/new_project/probe_rom.py <rom>` (in a snesrecomp
+checkout) prints mapping and coprocessor. `coprocessor=none` with LoROM/HiROM is the easy case; SA-1, Cx4,
+DSP-1 and Super FX have support; SPC7110, S-DD1 (experimental), OBC-1, ExLoROM and others do not.
+Check the checksum too (`checksum_valid=True`).
 
-**Website:** use `TopGun2-Site/templates/snes-site/` (same theme; a 16-bit-era cartridge with side
-grips and a four-button controller with L/R, both drawn in CSS). Fill every `{{...}}`, add the
-screenshots grid, set the SNES controls rows (Y/X/L/R are already in the table).
+### Starting the repo
+1. Run snesrecomp's own scaffolder from a checkout: `sh tools/new_project/setup_project.sh --rom <rom>
+   --dir ~/Documents/GitHub --name "<Game>" --players <n> --no-netplay --no-ci --no-fetch-boxart --no-generate
+   --no-build --no-github --yes`. It makes `<Game>SNESRecomp`; rename the folder to `<Game>Recomp`
+   (and the name inside CMakeLists/README/package script).
+2. Turn its git submodules into our Top Gun 2 layout: delete `.gitmodules`, `snesrecomp/`, `recomp-ui/`;
+   write `setup.sh` (clone to `vendor/` at pinned commits, `git submodule update --init --recursive` for
+   snesrecomp, apply `patches/`); point CMake at `vendor/snesrecomp` and `vendor/recomp-ui`; ignore `/vendor/`.
+3. ROM at `rom/<short>.sfc`, `rom.cfg` containing that path (git-ignored), `bash tools/regen.sh`, then
+   `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`. It boots on the first try: unresolved code runs
+   in the engine's interpreter ("LLE-first").
+4. Copy from Top Gun 2: `assets/signature*`, `assets/controllers/`, `LICENSE`, `THIRD_PARTY_NOTICES.md`
+   (rewrite the names), `.gitignore` (`*.sfc`, `rom.cfg`, `src/gen/`, `recomp/funcs.h`), `tools/capture-screenshots.sh`
+   idea (see the SNES version in Super Punch-Out), the icon generator.
+
+### Engine patches (all SNES ports get all of them: copy `patches/` from Super Punch-Out)
+| Patch | What it gives the player |
+|---|---|
+| recomp-ui-0001 | "Smooth pixels (blurry)" label; the launcher **Game** and **About** pages (identical to the NES one) |
+| 0001 | Mac settings, saves and ROM choice in `~/Library/Application Support/<program>` (one-time copy of old files) |
+| 0002 | per-voice mute (the SNES has eight DSP voices, not five named channels) |
+| 0003 | "Integer scaling" option, **on by default**; the window opens at a whole multiple (299x224 per step) |
+| 0004 | controller database (`assets/gamecontrollerdb.txt` + the player's own file) |
+| 0005 | the **Esc menu** (recomp-ui runtime menu drawn by Dear ImGui on a hidden OpenGL context, blended over the frozen game by any presenter), plus host fields `menu_items`, `menu_callbacks`, `about_*` for the Game/About pages. The pad opens it with Guide/Home or Select+L3 (L/R are game buttons) |
+| 0006 | one-player games: player 1 = keyboard **and** first controller |
+| 0007 | Mac: `keybinds.ini` and the mod state also go to Application Support (a signed app is read-only) |
+
+CMake: add `src/<short>_extras.c` (cheats), `src/<short>_ui.c` (Game page rows, About text, ini persistence),
+`${SNESRECOMP_ROOT}/host/snes_runtime_menu_gl.cpp`, define `SNESRECOMP_RUNTIME_MENU=1`, pass
+`BRAND assets/icon/<short>-256.png` to `recomp_target_launcher_ui` (launcher header icon), copy the signature to
+`assets/img/maddie-signature.png` and the controller database to `assets/`. `main.c` sets the `menu_*`/`about_*`
+fields, `.after_config = <Short>UiLoad`, and a `configure_launcher` that sets `info->mods = NULL` (no Mods page).
+
+Release program name: keep the CMake target as is, but name the shipped executable `<ShortName>` (the Mac
+settings folder follows the executable name).
+
+### What differs from the NES method
+- **Native coverage is not ~100%.** The engine always runs NMI/IRQ handlers and the frame loop in the
+  interpreter, and compiled code cannot pause mid-block, so per-frame native-vs-interpreter hashes cannot match
+  exactly. Report honest numbers (about 55-65% of real work for Super Punch-Out). What to prove instead:
+  RAM equal at checkpoints with the stack page and free-running counters blanked, plus a saved baseline
+  (`tests/check_baseline.sh`) that must keep reproducing after any change. Method and tools: `tests/` and
+  `notes/native-coverage.md` in Super Punch-Out.
+- **Config keys:** a new `config.ini` key must also be added to the `kvs[]` row table in `mmx_config.c`
+  (`WriteConfigFile`), or saving settings dies with "no kvs row for the requested key".
+- **Checking the menu or launcher needs a real window** (it uses the GPU): warn Maddie, keep each run to a few
+  seconds, never leave windows open. Test hooks: `SNESRECOMP_RUNTIME_MENU_SELFTEST=<frame>`,
+  `..._DUMP=<ppm>`, `..._SCRIPT="down,accept"`, `..._PRESENT_DUMP=<ppm>`; launcher: `LNG_SCRIPT`.
+- **Cheats:** find what the game really has (Super Punch-Out has no hearts or stars; it has a super meter,
+  health and REST tries). Prove each with a poke and a before/after, as in section 6; `notes/ram-map.md`.
+- **Releases** ship the compiled program (not a "setup host"): `tools/make_app.sh`, `make_windows_zip.sh`,
+  `make_linux.sh`, each running `tools/release_scan.py` (fails if ROM bytes are in the package).
+
+**Website:** use `TopGun2-Site/templates/snes-site/` (16-bit cartridge with side grips, four-button controller
+with L/R, drawn in CSS). Fill every `{{...}}`, set the SNES controls rows, add the 12 screenshots.
