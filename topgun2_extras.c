@@ -297,8 +297,9 @@ static const char ABOUT_TEXT[] =
     "It's free, and it'll stay free. You bring your own copy of the game; nothing from the "
     "original cartridge ships with this. It isn't made by or affiliated with Konami, "
     "Paramount or Nintendo.\n\n"
-    "Making these is how I pay my bills, though. If this made you smile, a tip helps me "
-    "keep going. No pressure at all.";
+    "Making apps (including some decomps) is how I pay my bills. If this game brought you "
+    "some nostalgia and you failed the carrier landing, feel free to drop me a tiny tip. "
+    "It really helps!";
 
 const CycHostExtras *cyc_host_extras(void)
 {

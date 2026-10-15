@@ -98,8 +98,7 @@ I love old NES games, and I wanted to play them on a modern computer the way the
 a real settings screen, controllers that just work, and a few cheats for when a mission is being mean.
 So I rebuilt Top Gun: The Second Mission as a native program for Mac, Windows and Linux.
 
-It's free, and it'll stay free. Making these is how I pay my bills, though.
-If this made you smile, a tip helps me keep going. No pressure at all.
+It's free, and it'll stay free. Making apps (including some decomps) is how I pay my bills. If this game brought you some nostalgia and you failed the carrier landing, feel free to drop me a tiny tip. It really helps!
 
 <img src="docs/signature.svg" width="200" alt="Signed, Maddie">
 
