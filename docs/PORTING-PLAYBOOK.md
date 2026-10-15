@@ -154,3 +154,20 @@ Change only: label colors/art, title, text, screenshots, download links.
 Reddit post in the Top Gun 2 shape: what it is (static recompilation, not an emulator), links to site
 and GitHub, features list, how to play with your own ROM, credits to NESRecomp, legal line, the tip
 paragraph. Suggest r/nes, r/retrogaming, r/emulation, r/macgaming, r/linux_gaming, one per day; never link a ROM.
+
+## 10. SNES games
+
+Same house style, different engine: **snesrecomp** (`github.com/mstan/snesrecomp`, same author and
+community as NESRecomp; existing ports include Super Mario World, Super Metroid, A Link to the Past,
+Star Fox, Mega Man X 1-3). The launcher and menus come from the same recomp-ui, so the Game and About
+pages (recomp-ui-0001) should carry over; check the pinned recomp-ui version first.
+
+Not carried over automatically: everything in the NES patches (0001-0007) lives in NESRecomp's runner.
+For an SNES port, check snesrecomp for each player-facing fix in the patch table (Mac settings folder,
+per-channel mute, crisp fit, Reset, one-player keyboard + controller, controller database, Close game)
+and port the missing ones to snesrecomp as `patches/` the same way. Look at an existing snesrecomp
+game repo (e.g. SuperMarioWorldRecomp) for its CMake/config shape before copying ours.
+
+**Website:** use `TopGun2-Site/templates/snes-site/` (same theme; a 16-bit-era cartridge with side
+grips and a four-button controller with L/R, both drawn in CSS). Fill every `{{...}}`, add the
+screenshots grid, set the SNES controls rows (Y/X/L/R are already in the table).
