@@ -69,13 +69,26 @@ Own mappings: put a `gamecontrollerdb.txt` in the settings folder
 ## Screenshots
 
 <p>
-  <img src="docs/screenshots/launcher-main.png" width="49%" alt="The launcher">
-  <img src="docs/screenshots/launcher-game.png" width="49%" alt="Game options before you play">
-</p>
-<p>
   <img src="docs/screenshots/gameplay-flight.png" width="32%" alt="Flying in mission 1">
   <img src="docs/screenshots/gameplay-banking.png" width="32%" alt="Banking with an enemy jet in view">
+  <img src="docs/screenshots/gameplay-mission2.png" width="32%" alt="Mission 2">
+</p>
+<p>
+  <img src="docs/screenshots/gameplay-mission3.png" width="32%" alt="Mission 3">
+  <img src="docs/screenshots/gameplay-deck.png" width="32%" alt="On the carrier deck">
   <img src="docs/screenshots/gameplay-briefing.png" width="32%" alt="Mission briefing">
+</p>
+<p>
+  <img src="docs/screenshots/launcher-main.png" width="49%" alt="The launcher">
+  <img src="docs/screenshots/launcher-game.png" width="49%" alt="Cheats and sound before you play">
+</p>
+<p>
+  <img src="docs/screenshots/launcher-settings.png" width="49%" alt="Launcher settings">
+  <img src="docs/screenshots/launcher-about.png" width="49%" alt="The About page">
+</p>
+<p>
+  <img src="docs/screenshots/ingame-menu.png" width="49%" alt="The in-game menu on Esc">
+  <img src="docs/screenshots/gameplay-intro.png" width="49%" alt="The opening scene">
 </p>
 
 ## Building it yourself

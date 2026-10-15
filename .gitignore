@@ -9,6 +9,10 @@ saves/
 *.cycstate
 *.state
 *.png
+# ...except our own artwork and the release screenshots the README shows.
+!assets/icon/*.png
+!assets/signature.png
+!docs/screenshots/*.png
 *.wav
 .DS_Store
 dist/
