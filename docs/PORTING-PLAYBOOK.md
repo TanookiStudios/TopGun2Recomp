@@ -217,54 +217,17 @@ settings folder follows the executable name).
   `..._DUMP=<ppm>`, `..._SCRIPT="down,accept"`, `..._PRESENT_DUMP=<ppm>`; launcher: `LNG_SCRIPT`.
 - **Cheats:** find what the game really has (Super Punch-Out has no hearts or stars; it has a super meter,
   health and REST tries). Prove each with a poke and a before/after, as in section 6; `notes/ram-map.md`.
+- **Always compare pictures with a trusted emulator, at full size.** Download the Snes9x libretro core
+  (outside the repo), build `tests/ref/refhost.c`, and run the same press/wait route in both. Super Punch-Out
+  looked fine in thumbnails and was visibly broken at full size (top bar flashing, garbled knockdown numbers).
+  With no input the title and demo should match Snes9x pixel for pixel; that is the quickest proof the engine
+  and the translated code are right. If the picture only breaks with translated code, bisect the routines
+  (delta-debug the function list) and run the culprits in the interpreter with
+  `interp_bridge_set_lle_bounce_exclusions` (long translated routines delay raster interrupts).
+- **HDMA switched on part-way down the picture** must carry on from where it last stopped, not restart its
+  table (`patches/0008`, `g_dma_hdma_midframe_inert = 2`, set from `GameRunOneFrame`). Snes9x does this.
 - **Releases** ship the compiled program (not a "setup host"): `tools/make_app.sh`, `make_windows_zip.sh`,
   `make_linux.sh`, each running `tools/release_scan.py` (fails if ROM bytes are in the package).
 
 **Website:** use `TopGun2-Site/templates/snes-site/` (16-bit cartridge with side grips, four-button controller
 with L/R, drawn in CSS). Fill every `{{...}}`, set the SNES controls rows, add the 12 screenshots.
-
-## 11. PlayStation games
-
-Same house style, engine **psxrecomp** (`github.com/mstan/psxrecomp`, same author as NESRecomp/snesrecomp; launcher
-`github.com/RetroPortingToolKit/recomp-ui`). Reference port: `TanookiStudios/TopGunFireAtWillRecomp`
-(local `~/Documents/GitHub/TopGunFireAtWillRecomp`); copy from it. Runs on the bundled free **OpenBIOS**: players
-need no BIOS dump. The disc is a `.cue` + `.bin` (Redump style).
-
-### Starting the repo
-1. Clone psxrecomp at the pin, build its recompiler (`cmake -S recompiler -B recompiler/build -G Ninja -DCMAKE_BUILD_TYPE=Release`),
-   then `sh tools/new_project_layout/setup_project.sh --disc <cue> --dir ~/Documents/GitHub --name <Game> --players <n>
-   --no-netplay --no-ci --no-fetch-boxart --no-wizard --enable-recomp-ui --no-generate --no-build --no-github --yes`.
-2. The scaffolder makes a git commit as `setup@localhost` and copies the boot program into `disc/`: delete its `.git`,
-   `.gitmodules`, `psxrecomp/`, `recomp-ui/`, `.github/`, `scripts/`, and start git fresh with the Maddie identity.
-3. `setup.sh` clones both engines into `vendor/` at pins and applies `patches/`; it also makes a `psxrecomp ->
-   vendor/psxrecomp` link (the engine's CLI hard-codes that path). `tools/regen.sh` translates the disc into
-   `generated/` (never committed; psxrecomp's own docs say to commit it, our rule wins).
-4. `game.toml`: remove the scaffolder's absolute `disc =` path (a fresh player's launcher would fail verification),
-   set `[video] antialiasing = false`, `[controller] p1_device = "auto"`.
-
-### Engine patches (copy `patches/` from Top Gun: Fire at Will)
-| Patch | What it gives the player |
-|---|---|
-| recomp-ui-0001 | "Smooth pixels (blurry)" label; launcher **Game** and **About** pages |
-| recomp-ui-0002 | the house **Esc menu** for single-disc titles: Display, Graphics, Audio, System, Controls, Cheats; Esc / Guide opens it |
-| 0001 | `psx_title_host.h`: the title fills launcher info (Game/About rows, `mods = NULL`) and can request **Reset game** |
-| 0002 | Mac: settings, saves, memory cards in `~/Library/Application Support/<program>` (folders linked, loose files copied from `Contents/Resources`) |
-| 0003 | integer scaling (OpenGL), on by default |
-| 0004 | controller database (`assets/gamecontrollerdb.txt` + the player's own) |
-| 0005 | one-player games: keyboard **and** first controller drive player 1 |
-| 0006 | music (CD audio) / sound-effect / reverb mutes |
-| 0007 | an always-on per-VBlank title hook for cheats |
-
-### Testing
-- Build `build-test/` with `-DPSX_DEBUG_TOOLS=ON` (release builds have no debug port). `tests/psx_tcp.py route` plays
-  scripted routes through the engine's frame-exact input playback (`input_route_start at_frame`); `--window` uses a
-  hidden real window (Esc menu works, nothing appears on screen). The menu pauses the game: use `sleep`, not `wait`.
-- Enemy behaviour drifts between runs after ~20 s even with exact inputs: compare outcomes, not frames.
-- Launcher shots: `LNG_TEST_HIDDEN=1 LNG_SCRIPT=...`. Screenshots: `tools/capture-screenshots.sh` (all hidden).
-
-### Releases
-- Mac: only the program in `Contents/MacOS`, everything else in `Contents/Resources` (code signing treats folders
-  with dots as nested bundles). Hide Homebrew SDL3, Freetype, PkgConfig **and OpenSSL** from CMake.
-- Windows: fully static MinGW build; stage the files directly (the engine's packager wants MinGW DLLs and bash 4).
-- `tools/release_scan.py` samples both the boot program and the disc image; `bios/openbios.bin` is the one `.bin` allowed.
-- Never ship an overlay cache (it is compiled from the disc).
