@@ -1,0 +1,122 @@
+diff --git a/src/common/backends/imgui/runtime_ui_imgui.cpp b/src/common/backends/imgui/runtime_ui_imgui.cpp
+index faf17f8..b85a5aa 100644
+--- a/src/common/backends/imgui/runtime_ui_imgui.cpp
++++ b/src/common/backends/imgui/runtime_ui_imgui.cpp
+@@ -112,6 +112,53 @@ void draw_items(RecompRuntimeUi *ui, const LauncherTheme &theme,
+ 
+         const bool enabled = recomp_runtime_ui_item_enabled(ui, item) != 0;
+         const bool selected = ui->in_section && index == ui->row_index;
++        if (item->type == RECOMP_RUNTIME_UI_PARAGRAPH ||
++            item->type == RECOMP_RUNTIME_UI_STROKES) {
++            /* Reading rows: wrapped text, or pen strokes (a signature). */
++            ImGui::PushID(static_cast<int>(index));
++            const ImVec2 start = ImGui::GetCursorScreenPos();
++            const float wrap = std::max(
++                40.0f, ImGui::GetContentRegionAvail().x - theme.spacing_md * 2.0f);
++            const char *text = item->description ? item->description : "";
++            const RecompRuntimeUiStrokes *strokes =
++                static_cast<const RecompRuntimeUiStrokes *>(item->data);
++            float scale = 1.0f, row_h;
++            if (item->type == RECOMP_RUNTIME_UI_PARAGRAPH) {
++                row_h = ImGui::CalcTextSize(text, nullptr, false, wrap).y +
++                        theme.spacing_sm * 2.0f;
++            } else {
++                if (strokes && strokes->width > 0.0f)
++                    scale = std::min(1.0f, std::min(wrap * 0.6f, 240.0f) / strokes->width);
++                row_h = (strokes ? strokes->height * scale : 0.0f) + theme.spacing_sm * 2.0f;
++            }
++            if (ImGui::Selectable("##reading", selected, 0, ImVec2(0.0f, row_h))) {
++                ui->row_index = index;
++                ui->in_section = 1;
++            }
++            if (ImGui::IsItemHovered()) {
++                ui->row_index = index;
++                ui->in_section = 1;
++            }
++            ImDrawList *draw = ImGui::GetWindowDrawList();
++            if (item->type == RECOMP_RUNTIME_UI_PARAGRAPH) {
++                draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
++                              ImVec2(start.x + theme.spacing_md, start.y + theme.spacing_sm),
++                              u32(theme.text), text, nullptr, wrap);
++            } else if (strokes && strokes->data) {
++                const float *p = strokes->data;
++                ImVec2 pts[512];
++                while (*p >= 2.0f) {
++                    int n = static_cast<int>(*p++);
++                    if (n > 512) n = 512;
++                    for (int k = 0; k < n; ++k, p += 2)
++                        pts[k] = ImVec2(start.x + theme.spacing_md + p[0] * scale,
++                                        start.y + theme.spacing_sm + p[1] * scale);
++                    draw->AddPolyline(pts, n, u32(theme.text), ImDrawFlags_None, 1.8f);
++                }
++            }
++            ImGui::PopID();
++            continue;
++        }
+         char value[128];
+         value_text(ui, item, value, sizeof(value));
+ 
+diff --git a/src/common/recomp_runtime_ui.c b/src/common/recomp_runtime_ui.c
+index 05c1791..49473ec 100644
+--- a/src/common/recomp_runtime_ui.c
++++ b/src/common/recomp_runtime_ui.c
+@@ -303,6 +303,8 @@ void recomp_runtime_ui_adjust_current(RecompRuntimeUi *ui, int direction,
+         return;
+     }
+     if (!recomp_runtime_ui_item_enabled(ui, item)) return;
++    if (item->type == RECOMP_RUNTIME_UI_PARAGRAPH ||
++        item->type == RECOMP_RUNTIME_UI_STROKES) return;
+     if (item->type == RECOMP_RUNTIME_UI_ACTION) {
+         if (!activate || repeat || !ui->config.callbacks.run_action) return;
+         const char *prompt = owned_confirm_prompt(ui, item);
+@@ -622,6 +624,11 @@ static int text_width(const char *text, int scale) {
+ 
+ static void item_value(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
+                        char *out, size_t out_size) {
++    if (item->type == RECOMP_RUNTIME_UI_PARAGRAPH ||
++        item->type == RECOMP_RUNTIME_UI_STROKES) {
++        out[0] = 0;
++        return;
++    }
+     if (item->type == RECOMP_RUNTIME_UI_ACTION) {
+         snprintf(out, out_size, ">");
+         return;
+diff --git a/src/recomp_runtime_ui.h b/src/recomp_runtime_ui.h
+index 8148bc4..3f2c7f6 100644
+--- a/src/recomp_runtime_ui.h
++++ b/src/recomp_runtime_ui.h
+@@ -42,8 +42,25 @@ typedef enum RecompRuntimeUiItemType {
+      * recomp_runtime_ui_wants_text_input().
+      */
+     RECOMP_RUNTIME_UI_TEXT,
++    /*
++     * Reading material, not a setting. PARAGRAPH wraps `description` to the
++     * page width and draws it as plain text; STROKES draws pen strokes
++     * (`data` points at a RecompRuntimeUiStrokes), such as a signature.
++     * Neither can be changed or activated; they only take the selection so
++     * the keys can scroll through them.
++     */
++    RECOMP_RUNTIME_UI_PARAGRAPH,
++    RECOMP_RUNTIME_UI_STROKES,
+ } RecompRuntimeUiItemType;
+ 
++/* Pen strokes for a RECOMP_RUNTIME_UI_STROKES row: `data` holds, per stroke,
++ * a point count and then that many x,y pairs (in 0..width, 0..height), and
++ * ends with a count of 0. */
++typedef struct RecompRuntimeUiStrokes {
++    float width, height;
++    const float *data;
++} RecompRuntimeUiStrokes;
++
+ typedef enum RecompRuntimeUiInput {
+     RECOMP_RUNTIME_UI_INPUT_TOGGLE,
+     RECOMP_RUNTIME_UI_INPUT_BACK,
+@@ -105,6 +122,8 @@ typedef struct RecompRuntimeUiItem {
+     size_t choice_count;
+     /* Optional stable values for sparse choices. NULL means minimum + index. */
+     const int *choice_values;
++    /* Extra data for the row types that need it (STROKES). */
++    const void *data;
+ } RecompRuntimeUiItem;
+ 
+ typedef struct RecompRuntimeUiCallbacks {
