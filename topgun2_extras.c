@@ -15,6 +15,7 @@
 
 #ifdef CYC_WITH_RECOMP_UI
 #include "recomp_runtime_ui.h"
+#include <SDL.h>   /* SDL_OpenURL, for the About section's tip button */
 #endif
 
 extern uint8_t hw_apu_mute_mask;   /* patches/0002: bit i silences APU channel i */
@@ -224,6 +225,10 @@ static bool option(void *ctx, const char *name, const char *value)
 /* ---- menu rows ---- */
 
 #ifdef CYC_WITH_RECOMP_UI
+static const char *const BLANK[] = { " " };
+#define INFO(key, label, desc) \
+    { key, "About", label, desc, RECOMP_RUNTIME_UI_CHOICE, 0, 0, 1, BLANK, 1, NULL }
+
 static const RecompRuntimeUiItem MENU[] = {
     { "tg2.mute.0", "Audio", "Mute pulse 1",  "Lead melody and some effects.", RECOMP_RUNTIME_UI_BOOL },
     { "tg2.mute.1", "Audio", "Mute pulse 2",  "Harmony and some effects.",     RECOMP_RUNTIME_UI_BOOL },
@@ -239,7 +244,30 @@ static const RecompRuntimeUiItem MENU[] = {
     { "tg2.cheat.0", "Cheats", "Infinite lives",    "Losing a plane doesn't cost a life.",   RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.1", "Cheats", "Infinite missiles", "Firing doesn't use up missiles.",       RECOMP_RUNTIME_UI_BOOL },
     { "tg2.cheat.2", "Cheats", "Can't be hit", "Enemy missiles never hit your plane.",           RECOMP_RUNTIME_UI_BOOL },
+    /* The About section of the Esc menu (the launcher's Game page shows only the rows above, see
+     * menu_launcher_item_count). The menu shows one line per label and per description, so the letter is
+     * broken into short lines. The rows stay selectable so the keys can scroll through the letter. */
+    INFO("tg2.about.1", "Hi, I'm Maddie. I make apps and games on my own at",
+         "Tanooki Studios."),
+    INFO("tg2.about.2", "I love old NES games, and I wanted to play them on a",
+         "modern computer the way they deserve: crisp pixels at"),
+    INFO("tg2.about.3", "any size, a real settings screen, controllers that",
+         "just work, and a few cheats for when a mission is"),
+    INFO("tg2.about.4", "being mean. So I rebuilt Top Gun: The Second Mission",
+         "as a native program for Mac, Windows and Linux."),
+    INFO("tg2.about.5", "It's free, and it'll stay free. You bring your own",
+         "copy of the game; nothing from the original cartridge"),
+    INFO("tg2.about.6", "ships with this. It isn't made by or affiliated with",
+         "Konami, Paramount or Nintendo."),
+    INFO("tg2.about.7", "Making apps (including some decomps) is how I pay my",
+         "bills. If this game brought you some nostalgia and you"),
+    INFO("tg2.about.8", "failed the carrier landing, feel free to drop me a",
+         "tiny tip. It really helps!"),
+    { "tg2.about.tip", "About", "Leave a Tip", "Opens tanookistudios.com/SupportMe in your browser.",
+      RECOMP_RUNTIME_UI_ACTION },
+    INFO("tg2.about.sig", "- Maddie", "Tanooki Studios"),
 };
+#define MENU_LAUNCHER_ROWS 11   /* the rows before the About section */
 
 /* "tg2.mute.N" -> &s.mute bit N, "tg2.cheat.N" -> &s.cheats bit N. */
 static uint8_t *row_bits(const RecompRuntimeUiItem *item, int *bit)
@@ -252,6 +280,7 @@ static uint8_t *row_bits(const RecompRuntimeUiItem *item, int *bit)
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
+    if (!strncmp(item->key, "tg2.about.", 10)) { *out = 0; return 1; }   /* reading rows */
     if (!strcmp(item->key, "tg2.start")) { *out = s.start; return 1; }
     int bit;
     uint8_t *bits = row_bits(item, &bit);
@@ -279,6 +308,7 @@ static int run_action(void *ctx, const RecompRuntimeUiItem *item)
         s_reset_pending = true;
         return 1;
     }
+    if (!strcmp(item->key, "tg2.about.tip")) { SDL_OpenURL("https://tanookistudios.com/SupportMe"); return 1; }
     if (strcmp(item->key, "tg2.skip")) return 0;
     s_skip_pending = true;   /* applied at the end of the next frame */
     return 1;
@@ -307,6 +337,7 @@ const CycHostExtras *cyc_host_extras(void)
 #ifdef CYC_WITH_RECOMP_UI
         .menu_items = MENU,
         .menu_item_count = sizeof MENU / sizeof MENU[0],
+        .menu_launcher_item_count = MENU_LAUNCHER_ROWS,
         .menu_callbacks = &MENU_CB,
 #endif
         .load_setting = load_setting,

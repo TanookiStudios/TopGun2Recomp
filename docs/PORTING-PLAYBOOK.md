@@ -76,6 +76,10 @@ Keep unchanged: `setup.sh` (pinned engine versions), every file in `patches/`, `
     `https://tanookistudios.com/SupportMe`.
 - **Esc menu:** Display, Graphics, Audio, System (Resume, Save/Load state, **Reset game**, **Close game**),
   Controls, Cheats. Right shoulder button opens it on a controller.
+  **About** is the last section: Maddie's letter broken into short lines (the menu shows one line per label and
+  per description; about 54 characters fit), then a Leave a Tip button that opens the tip page. Rows stay
+  selectable so the keys can scroll through the letter. (`topgun2_extras.c`, `src/superpunchout_ui.c`;
+  `menu_launcher_item_count` keeps these rows off the launcher's Game page.)
 - **Controllers:** must work with no setup (patch 0007 + bundled `gamecontrollerdb.txt`). Prove it with
   the TCP checks in section 6.
 - **Cheats, the standard set** where the game allows: infinite lives, infinite ammo/missiles/items,

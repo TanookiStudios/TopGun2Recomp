@@ -1,0 +1,28 @@
+diff --git a/runner/cyc/cyc_host_extras.h b/runner/cyc/cyc_host_extras.h
+index 5a6abd6..5935f6c 100644
+--- a/runner/cyc/cyc_host_extras.h
++++ b/runner/cyc/cyc_host_extras.h
+@@ -109,6 +109,9 @@ typedef struct CycHostExtras {
+      * an image under assets/img drawn after it, and a link button. NULL text
+      * => no page. The launcher's Game page shows menu_items (ACTION rows
+      * excepted) through menu_callbacks. */
++    /* The launcher's Game page shows only the first this-many menu_items (0: all);
++     * the rest are for the in-game menu only, such as its About section. */
++    size_t menu_launcher_item_count;
+     const char *about_text;
+     const char *about_image;
+     const char *about_link_url;
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index 92659fc..cea2023 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -219,7 +219,8 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+ #ifdef RECOMP_LAUNCHER_HAS_GAME_AND_ABOUT_PAGES
+     if (extras) {
+         gi.game_items = extras->menu_items;
+-        gi.game_item_count = extras->menu_item_count;
++        gi.game_item_count = extras->menu_launcher_item_count ? extras->menu_launcher_item_count
++                                                              : extras->menu_item_count;
+         gi.game_callbacks = extras->menu_callbacks;
+         gi.about_text = extras->about_text;
+         gi.about_image = extras->about_image;
